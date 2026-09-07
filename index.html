@@ -32,11 +32,11 @@
       justify-content: center;
       align-items: center;
       z-index: 1;
+      touch-action: none;
     }
 
-    /* Video de cámara oculto para MediaPipe */
-    #webcam {
-      display: none;
+    canvas {
+      touch-action: none;
     }
 
     /* Video de cámara oculto para MediaPipe */
@@ -208,11 +208,12 @@
     <button id="btn-iniciar" class="start-btn" onclick="iniciarExperiencia()">📷 PERMITIR CÁMARA Y COMENZAR</button>
     <p style="margin-top: 14px; font-size: 13px; color: #00dcff;">Tu navegador te pedirá permiso para usar la cámara web.</p>
     <div class="instructions-box">
-      <b>🎮 Cómo interactuar:</b><br>
-      • <b>Cámara:</b> Al hacer clic se solicitará permiso para la captura de video.<br>
-      • <b>Menú:</b> Cierra el puño para recorrer las 9 celdas.<br>
-      • <b>Selección:</b> Abre la mano durante 2 segundos para entrar.<br>
-      • <b>Pantalla táctil / Ratón:</b> También puedes tocar o mantener presionado 2 segundos sobre cualquier celda.
+      <b>🎮 Cómo interactuar en el Menú:</b><br>
+      • <b>Fila 1 (Estados 1, 2, 3):</b> Mano IZQUIERDA según el tercio horizontal.<br>
+      • <b>Fila 2 (Estados 4, 5, 6):</b> AMBAS MANOS según el tercio horizontal.<br>
+      • <b>Fila 3 (Estados 7, 8, 9):</b> Mano DERECHA según el tercio horizontal.<br>
+      • <b>Navegar / Seleccionar:</b> Puño cerrado recorre las celdas; mano abierta durante 2 segundos entra al estado.<br>
+      • <b>Táctil / Ratón:</b> También puedes tocar o mantener presionado 2 segundos cualquier celda.
     </div>
   </div>
 

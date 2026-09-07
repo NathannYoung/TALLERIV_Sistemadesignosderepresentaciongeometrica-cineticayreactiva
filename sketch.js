@@ -29,11 +29,12 @@ let celdaH = 0;
 // Sonido de selección
 let sonidoEstado = null;
 
-// Gifs de personajes por estado (1..9)
-let gifsEstados = new Array(10);
+// Tutoriales de personajes por estado (1..9): capas 1 y 2 alternadas (3 ciclos en 2 segundos)
+let capasEstado1 = new Array(10);
+let capasEstado2 = new Array(10);
 let mostrarGifEstado = false;
 let tiempoInicioGif = 0;
-const DURACION_GIF_ESTADO = 4000; // 4 segundos
+const DURACION_GIF_ESTADO = 2000; // 2 segundos exactos
 let estadoActualGif = -1;
 
 // Imágenes del Tutorial (carpeta data/TUTORIAL/1.png a 12.png)
@@ -155,11 +156,37 @@ function preload() {
     );
   }
 
+  const rutasCapas = [
+    null,
+    { c1: "data/01/capa1.png", c2: "data/01/Capa2.png" },
+    { c1: "data/02/capa1.png", c2: "data/02/capa2.png" },
+    { c1: "data/03/capa1.png", c2: "data/03/Capa2.png" },
+    { c1: "data/04/capa1.png", c2: "data/04/Capa2.png" },
+    { c1: "data/05/Capa1.png", c2: "data/05/Capa2.png" },
+    { c1: "data/06/Capa1.png", c2: "data/06/Capa2.png" },
+    { c1: "data/07/Capa1.png", c2: "data/07/Capa2.png" },
+    { c1: "data/08/Capa1.png", c2: "data/08/Capa2.png" },
+    { c1: "data/09/Capa1.png", c2: "data/09/Capa2.png" }
+  ];
+
   for (let i = 1; i <= 9; i++) {
     const numStr = i < 10 ? `0${i}` : `${i}`;
-    loadImage(`data/${numStr}/gift ${numStr}.gif`,
-      (img) => { gifsEstados[i] = img; },
-      () => {}
+    const r = rutasCapas[i];
+
+    loadImage(r.c1,
+      (img) => { capasEstado1[i] = img; },
+      () => {
+        const alt1 = `data/${numStr}/${r.c1.includes('Capa1') ? 'capa1.png' : 'Capa1.png'}`;
+        loadImage(alt1, (img) => { capasEstado1[i] = img; }, () => {});
+      }
+    );
+
+    loadImage(r.c2,
+      (img) => { capasEstado2[i] = img; },
+      () => {
+        const alt2 = `data/${numStr}/${r.c2.includes('Capa2') ? 'capa2.png' : 'Capa2.png'}`;
+        loadImage(alt2, (img) => { capasEstado2[i] = img; }, () => {});
+      }
     );
   }
 }
@@ -347,15 +374,26 @@ function draw() {
     // Fondo negro idéntico a Processing
     background(0);
 
-    // Dibujar el estado interactivo centrado
+    // Dibujar el estado interactivo centrado con escala responsiva para celulares/tablets
     push();
     translate(width / 2, height / 2);
+    let escalaEstado = obtenerEscalaEstado();
+    scale(escalaEstado);
     dibujarEstado(estado);
     pop();
 
     // Dibujar GIF animado del personaje con transparencia (SCREEN)
     dibujarGifEstado();
   }
+}
+
+// Escala adaptativa para pantallas móviles y tablets (evita figuras gigantes en celulares)
+function obtenerEscalaEstado() {
+  let menorDim = Math.min(width, height);
+  if (menorDim < 850) {
+    return Math.max(0.42, menorDim / 850.0);
+  }
+  return 1.0;
 }
 
 // ============================================================
@@ -399,25 +437,25 @@ function volverAlMenu() {
 }
 
 function iniciarGifEstado(n) {
-  let gifIndex = n;
-  if (n === 5) gifIndex = 6;
-  else if (n === 6) gifIndex = 5;
-  estadoActualGif = gifIndex;
+  let folderIndex = n;
+  if (n === 5) folderIndex = 6;
+  else if (n === 6) folderIndex = 5;
+  estadoActualGif = folderIndex;
   mostrarGifEstado = true;
   tiempoInicioGif = millis();
 }
 
-// Render del GIF sin fondo negro usando blendMode(SCREEN) y con overlay negro al 25%
+// Render del tutorial del estado alternando 2 imágenes (capa1 y capa2) 3 veces cada una durante 2 segundos
 function dibujarGifEstado() {
   if (!mostrarGifEstado || estadoActualGif < 1 || estadoActualGif > 9) return;
 
-  // Mientras se muestra el GIF, se resetea la inactividad para que no descuente tiempo
+  // Mientras se muestra el tutorial de 2s, se mantiene activa la sesión
   ultimaActividadEstado = millis();
 
   const transcurrido = millis() - tiempoInicioGif;
-  if (transcurrido > DURACION_GIF_ESTADO) {
+  if (transcurrido >= DURACION_GIF_ESTADO) {
     mostrarGifEstado = false;
-    ultimaActividadEstado = millis(); // Inicia el conteo de 10s al terminar el GIF
+    ultimaActividadEstado = millis(); // Inicia el conteo de inactividad de 10s al terminar el tutorial
     return;
   }
 
@@ -430,15 +468,23 @@ function dibujarGifEstado() {
   rect(0, 0, width, height);
   pop();
 
-  const gif = gifsEstados[estadoActualGif];
-  if (gif && gif.width > 0) {
+  // Exactamente 3 ciclos de cada una de las 2 imágenes durante los 2 segundos:
+  // 6 pasos en total de ~333.33 ms cada uno (Paso 0: Capa1, Paso 1: Capa2, Paso 2: Capa1, ...)
+  let paso = Math.floor((transcurrido / DURACION_GIF_ESTADO) * 6);
+  if (paso < 0) paso = 0;
+  if (paso > 5) paso = 5;
+
+  let img = (paso % 2 === 0) ? capasEstado1[estadoActualGif] : capasEstado2[estadoActualGif];
+  if (!img) img = capasEstado1[estadoActualGif] || capasEstado2[estadoActualGif];
+
+  if (img && img.width > 0) {
     push();
     resetMatrix();
 
     let maxW = width * 0.95;
     let maxH = height * 0.88;
-    let w = gif.width * 2.0;
-    let h = gif.height * 2.0;
+    let w = img.width * 2.0;
+    let h = img.height * 2.0;
 
     if (w > maxW || h > maxH) {
       let factor = min(maxW / w, maxH / h);
@@ -453,7 +499,7 @@ function dibujarGifEstado() {
     // Clave para eliminar fondo negro: SCREEN hace transparentes los píxeles negros
     blendMode(SCREEN);
     imageMode(CENTER);
-    image(gif, 0, 0, w, h);
+    image(img, 0, 0, w, h);
     blendMode(BLEND);
 
     pop();
@@ -747,9 +793,17 @@ function actualizarSeleccionMouse() {
   }
 }
 
+let tiempoUltimoGestoValido = 0;
+
 function interaccionValidaEstado() {
   if (mostrarGifEstado) return false;
-  return mouseIsPressed || HandTracker.gestoActivo;
+  let hayGesto = mouseIsPressed || HandTracker.gestoActivo;
+  if (hayGesto) {
+    tiempoUltimoGestoValido = millis();
+    return true;
+  }
+  // Amortiguador de gracia de 250ms para mantener interacción continua y estable en Estado 9
+  return (millis() - tiempoUltimoGestoValido < 250);
 }
 
 function mousePressed() {
@@ -762,13 +816,16 @@ function touchStarted(event) {
   if (event && event.target && event.target.tagName !== 'CANVAS') {
     return true;
   }
+  if (event && event.cancelable) {
+    event.preventDefault();
+  }
   if (!window.experienciaIniciada) {
-    return true;
+    return false;
   }
   if (estado !== MENU) {
     activarClickEstado();
   }
-  return true;
+  return false;
 }
 
 function mouseReleased() {
@@ -780,9 +837,12 @@ function touchEnded(event) {
   if (event && event.target && event.target.tagName !== 'CANVAS') {
     return true;
   }
+  if (event && event.cancelable) {
+    event.preventDefault();
+  }
   if (estado === 2) soltarEstado2();
   if (estado === 3) soltarActivacionEstado3();
-  return true;
+  return false;
 }
 
 function keyPressed() {
@@ -794,6 +854,7 @@ function keyPressed() {
 }
 
 function activarClickEstado() {
+  if (mostrarGifEstado) return;
   ultimaActividadEstado = millis();
   if (estado === 1) clickEstado1();
   if (estado === 2) presionarEstado2();
@@ -1720,6 +1781,8 @@ class ParticulaEstado2 {
   }
 }
 
+let ultimoGestoEstado2 = 0;
+
 function reiniciarEstado2() {
   particulasEstado2 = [];
   gruposVisualesEstado2 = [];
@@ -1730,6 +1793,7 @@ function reiniciarEstado2() {
   pulsacionProcesadaEstado2 = false;
   contadorEmisionEstado2 = 0;
   previewTransferidaEstado2 = false;
+  ultimoGestoEstado2 = 0;
 }
 
 function transferirPreviewAEstado2() {
@@ -1812,7 +1876,7 @@ function crearNuevaTandaEstado2() {
   let tipoDistancia = (ciclo < 2) ? 0 : 1; // 0 = 200px, 1 = 330px
 
   for (let i = 0; i < CANTIDAD_GRUPOS_ESTADO2; i++) {
-    let angulo = offsetTandaEstado2 + (i * TWO_PI / CANTIDAD_GRUPOS_ESTADO2);
+    let angulo = -HALF_PI + offsetTandaEstado2 + (i * TWO_PI / CANTIDAD_GRUPOS_ESTADO2);
     let grupo = new GrupoVisualEstado2(inicioUltimaTandaEstado2 + i, angulo, tipoDistancia);
     gruposVisualesEstado2.push(grupo);
   }
@@ -1848,16 +1912,32 @@ function dibujarEstado2() {
     transferirPreviewAEstado2();
   }
 
-  // Interacción continua o detección de gesto
-  if (interaccionValidaEstado()) {
+  // Control de interacción: Click / Touch o Detección de Gestos por Cámara
+  if (mostrarGifEstado) {
+    ultimoGestoEstado2 = 0;
+  } else if (mouseIsPressed) {
     ultimaActividadEstado = millis();
     if (!mousePresionadoEstado2) {
       presionarEstado2();
     }
+  } else if (HandTracker.activo && HandTracker.gestoId > 0) {
+    ultimaActividadEstado = millis();
+
+    if (HandTracker.gestoId !== ultimoGestoEstado2) {
+      // El usuario cambió de gesto (ej. abrió la mano, cerró el puño, la levantó al hombro, etc.)
+      ultimoGestoEstado2 = HandTracker.gestoId;
+      soltarEstado2();
+      presionarEstado2(); // Activa exactamente una nueva tanda de 5 círculos alrededor
+    } else {
+      // Mientras mantiene el gesto, permanece activo de forma estable sin reiniciar partículas
+      mousePresionadoEstado2 = true;
+    }
   } else {
+    // Sin interacción activa
     if (mousePresionadoEstado2) {
       soltarEstado2();
     }
+    ultimoGestoEstado2 = 0;
   }
 
   // Emisión continua cada 3 frames

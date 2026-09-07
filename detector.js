@@ -17,6 +17,8 @@ const HandTracker = {
   esPuno: false,
   esAbierta: false,
   gestoActivo: false,
+  gestoId: 0,
+  gestoNombre: "NINGUNO",
   
   // Control de selección en Menú
   celdaHover: -1,         // 0..8
@@ -37,6 +39,14 @@ let cameraHelper = null;
 let seleccionConfirmada = false;
 let isProcessingFrame = false;
 
+// Variables de amortiguación anti-parpadeo (Debounce & Hysteresis)
+let framesSinMano = 0;
+const MAX_FRAMES_GRACIA = 10; // ~300ms a 30 FPS para estabilizar caídas momentáneas de frames
+let candidatoGestoActual = 0;
+let framesCandidatoGesto = 0;
+let ultimoTextoUI = "";
+let ultimoTipoUI = "";
+
 let listaCamaras = [];
 let indiceCamaraActual = 0;
 let esComputadora = !(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
@@ -48,15 +58,16 @@ let esComputadora = !(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera 
 function initHandDetector() {
   videoElement = document.getElementById("webcam");
 
-  actualizarEstadoUI("waiting", "Iniciando MediaPipe Hands (Modo Rápido)...");
+  actualizarEstadoUI("waiting", "Iniciando MediaPipe Hands...");
 
   mpHands = new Hands({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
   });
 
-  // modelComplexity 0 = Lite (3x más rápido, perfecto para 60 FPS en web/móvil)
+  // maxNumHands: 2 permite detectar ambas manos para la Fila 2 (Estados 4, 5, 6)
+  // modelComplexity 0 = Lite (óptimo para 60 FPS en web y móviles)
   mpHands.setOptions({
-    maxNumHands: 1, // 1 mano principal ahorra 50% de procesamiento
+    maxNumHands: 2,
     modelComplexity: 0,
     minDetectionConfidence: 0.45,
     minTrackingConfidence: 0.45
@@ -87,10 +98,10 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
     } catch (e) {}
   }
 
-  // Resolución optimizada (480x360 es ideal: rápida y muy precisa para MediaPipe)
+  // Resolución optimizada (480x360 en PC, 320x240 en móviles para máxima fluidez a 60 FPS)
   let videoConstraints = {
-    width: { ideal: 480, max: 640 },
-    height: { ideal: 360, max: 480 }
+    width: { ideal: esComputadora ? 480 : 320, max: 480 },
+    height: { ideal: esComputadora ? 360 : 240, max: 360 }
   };
 
   if (deviceIdDeseado) {
@@ -98,6 +109,10 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
   } else if (!esComputadora) {
     videoConstraints.facingMode = HandTracker.facingMode;
   }
+
+  // Intervalo de procesamiento: ~30 FPS en PC, ~20 FPS en móviles (ahorra >60% de CPU/GPU en celulares)
+  let ultimoTiempoEnvioMP = 0;
+  const INTERVALO_FRAME_MP = esComputadora ? 32 : 50;
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -118,9 +133,12 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
     // Bucle con guardia para evitar apilamiento de cuadros
     cameraHelper = new Camera(videoElement, {
       onFrame: async () => {
+        const ahora = performance.now();
+        if (ahora - ultimoTiempoEnvioMP < INTERVALO_FRAME_MP) return;
         if (isProcessingFrame) return;
         if (videoElement && videoElement.readyState >= 2) {
           isProcessingFrame = true;
+          ultimoTiempoEnvioMP = ahora;
           try {
             await mpHands.send({ image: videoElement });
           } catch (err) {
@@ -130,8 +148,8 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
           }
         }
       },
-      width: 480,
-      height: 360
+      width: esComputadora ? 480 : 320,
+      height: esComputadora ? 360 : 240
     });
     cameraHelper.start();
 
@@ -154,9 +172,12 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
 
       cameraHelper = new Camera(videoElement, {
         onFrame: async () => {
+          const ahora = performance.now();
+          if (ahora - ultimoTiempoEnvioMP < INTERVALO_FRAME_MP) return;
           if (isProcessingFrame) return;
           if (videoElement && videoElement.readyState >= 2) {
             isProcessingFrame = true;
+            ultimoTiempoEnvioMP = ahora;
             try {
               await mpHands.send({ image: videoElement });
             } finally {
@@ -164,8 +185,8 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
             }
           }
         },
-        width: 480,
-        height: 360
+        width: esComputadora ? 480 : 320,
+        height: esComputadora ? 360 : 240
       });
       cameraHelper.start();
     } catch (e2) {
@@ -198,7 +219,14 @@ function alternarCamara() {
 // ============================================================
 
 function onHandResults(results) {
+  // Manejo de pérdida temporal de manos (Grace Period para evitar parpadeo en Estado 9)
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    framesSinMano++;
+    if (framesSinMano <= MAX_FRAMES_GRACIA) {
+      // Durante el período de gracia retenemos la interacción para que no parpadee ni se corte Estado 9
+      return;
+    }
+
     HandTracker.activo = false;
     HandTracker.numManos = 0;
     HandTracker.celdaHover = -1;
@@ -207,42 +235,128 @@ function onHandResults(results) {
     HandTracker.esPuno = false;
     HandTracker.esAbierta = false;
     HandTracker.gestoActivo = false;
+    HandTracker.gestoId = 0;
+    HandTracker.gestoNombre = "NINGUNO";
+    candidatoGestoActual = 0;
+    framesCandidatoGesto = 0;
     actualizarEstadoUI("active", "Cámara activa. Acerca tu mano.");
     return;
   }
 
+  // Detección activa confirmada
+  framesSinMano = 0;
   HandTracker.activo = true;
   HandTracker.numManos = results.multiHandLandmarks.length;
 
-  const landmarks = results.multiHandLandmarks[0];
-  const handedness = results.multiHandedness && results.multiHandedness[0] 
-    ? results.multiHandedness[0].label 
-    : "Right";
-  HandTracker.manoPrincipal = handedness;
+  const manos = [];
+  for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+    const lms = results.multiHandLandmarks[i];
+    const rawX = (lms[0].x + lms[9].x) * 0.5;
+    const rawY = (lms[0].y + lms[9].y) * 0.5;
+    const hx = 1.0 - rawX; // Coordenada horizontal en modo espejo [0..1]
+    const hy = rawY;
 
-  // Centro de la palma normalizado en modo espejo
-  const rawX = (landmarks[0].x + landmarks[9].x) * 0.5;
-  const rawY = (landmarks[0].y + landmarks[9].y) * 0.5;
-  HandTracker.manoX = 1.0 - rawX;
-  HandTracker.manoY = rawY;
+    const esPuno = verificarPuno(lms);
+    const esAbierta = !esPuno;
 
-  // Clasificación geométrica
-  const esPuno = verificarPuno(landmarks);
-  const esAbierta = verificarManoAbierta(landmarks);
+    // En video sin espejo pasado a MediaPipe, "Right" es la mano izquierda real del usuario
+    const rawLabel = results.multiHandedness && results.multiHandedness[i]
+      ? results.multiHandedness[i].label
+      : "Right";
 
-  HandTracker.esPuno = esPuno;
-  HandTracker.esAbierta = esAbierta;
-  HandTracker.gestoActivo = esPuno || esAbierta;
+    const esManoIzq = (HandTracker.facingMode === "user") ? (rawLabel === "Right") : (rawLabel === "Left");
+    const esManoDer = !esManoIzq;
 
-  // Lógica del menú principal
-  if (typeof estado !== "undefined" && estado === 0) {
-    const col = Math.min(2, Math.max(0, Math.floor(HandTracker.manoX * 3)));
-    const row = Math.min(2, Math.max(0, Math.floor(HandTracker.manoY * 3)));
-    const celda = row * 3 + col;
+    manos.push({
+      lms,
+      hx,
+      hy,
+      esPuno,
+      esAbierta,
+      esManoIzq,
+      esManoDer,
+      rawLabel
+    });
+  }
 
+  // Coordenadas primarias para visualización
+  HandTracker.manoX = manos[0].hx;
+  HandTracker.manoY = manos[0].hy;
+  HandTracker.manoPrincipal = manos[0].rawLabel;
+  HandTracker.esPuno = manos.some(m => m.esPuno);
+  HandTracker.esAbierta = manos.some(m => m.esAbierta);
+  HandTracker.gestoActivo = true;
+
+  // Clasificación de gestos con histeresis
+  let tipoGestoDetectado = 0;
+  let nombreGestoDetectado = "NINGUNO";
+
+  if (manos.length >= 2) {
+    tipoGestoDetectado = 5;
+    nombreGestoDetectado = "Ambas Manos";
+  } else if (manos.length === 1) {
+    const m = manos[0];
+    const esArriba = (m.hy < 0.50); // Mano en tercio superior / hombro / cabeza
+    if (m.esPuno) {
+      tipoGestoDetectado = esArriba ? 2 : 1;
+      nombreGestoDetectado = esArriba ? "Puño Arriba / Hombro" : "Puño";
+    } else {
+      tipoGestoDetectado = esArriba ? 4 : 3;
+      nombreGestoDetectado = esArriba ? "Mano Abierta Arriba" : "Mano Abierta";
+    }
+  }
+
+  // Debounce de 2 frames para estabilizar el gesto y evitar parpadeo
+  if (tipoGestoDetectado === candidatoGestoActual) {
+    framesCandidatoGesto++;
+    if (framesCandidatoGesto >= 2) {
+      HandTracker.gestoId = tipoGestoDetectado;
+      HandTracker.gestoNombre = nombreGestoDetectado;
+    }
+  } else {
+    candidatoGestoActual = tipoGestoDetectado;
+    framesCandidatoGesto = 0;
+  }
+
+  const enMenu = (typeof estado === "undefined" || estado === 0);
+
+  if (enMenu) {
+    let fila = 0;
+    let col = 0;
+    let nombreFila = "";
+    let manoAbiertaMenu = false;
+    let esPunoMenu = false;
+
+    if (manos.length === 1) {
+      const m = manos[0];
+      const hx = Math.max(0.0, Math.min(1.0, m.hx));
+      col = (hx < 0.333) ? 0 : (hx < 0.666 ? 1 : 2);
+
+      if (m.esManoIzq) {
+        fila = 0; // Fila 1 (Superior): Estados 1, 2, 3
+        nombreFila = "Mano Izquierda";
+      } else {
+        fila = 2; // Fila 3 (Inferior): Estados 7, 8, 9
+        nombreFila = "Mano Derecha";
+      }
+      manoAbiertaMenu = m.esAbierta;
+      esPunoMenu = m.esPuno;
+    } else {
+      // 2 manos a la vez -> Fila 2 (Centro): Estados 4, 5, 6
+      fila = 1;
+      const cx = (manos[0].hx + manos[1].hx) * 0.5;
+      const hx = Math.max(0.0, Math.min(1.0, cx));
+      col = (hx < 0.333) ? 0 : (hx < 0.666 ? 1 : 2);
+      nombreFila = "Ambas Manos";
+
+      manoAbiertaMenu = (!manos[0].esPuno && !manos[1].esPuno);
+      esPunoMenu = (manos[0].esPuno || manos[1].esPuno);
+    }
+
+    const celda = fila * 3 + col;
     HandTracker.celdaHover = celda;
 
-    if (esAbierta) {
+    if (manoAbiertaMenu) {
       if (HandTracker.estadoSeleccion !== celda) {
         HandTracker.estadoSeleccion = celda;
         HandTracker.tiempoInicioApertura = Date.now();
@@ -260,22 +374,23 @@ function onHandResults(results) {
           }
         }
       }
-      actualizarEstadoUI("detecting", `Seleccionando Estado ${celda + 1} (${Math.round(HandTracker.progresoSeleccion * 100)}%)`);
+      actualizarEstadoUI("detecting", `${nombreFila} en Tercio ${col + 1} → Estado ${celda + 1} (${Math.round(HandTracker.progresoSeleccion * 100)}%)`);
     } else {
       HandTracker.estadoSeleccion = -1;
       HandTracker.progresoSeleccion = 0;
       seleccionConfirmada = false;
-      if (esPuno) {
-        actualizarEstadoUI("active", `Navegando (Puño) en Sector ${celda + 1}`);
+      if (esPunoMenu) {
+        actualizarEstadoUI("active", `${nombreFila} en Tercio ${col + 1} → Estado ${celda + 1} (Puño: Navegando)`);
       } else {
-        actualizarEstadoUI("active", `Mano en Sector ${celda + 1}`);
+        actualizarEstadoUI("active", `${nombreFila} en Tercio ${col + 1} → Estado ${celda + 1}`);
       }
     }
   } else {
+    // Fuera del menú (Estados interactivos 1 a 9)
     HandTracker.celdaHover = -1;
     HandTracker.estadoSeleccion = -1;
     HandTracker.progresoSeleccion = 0;
-    actualizarEstadoUI("detecting", `Interactuando en Estado ${typeof estado !== "undefined" ? estado : ""}`);
+    actualizarEstadoUI("detecting", `Interactuando en Estado ${typeof estado !== "undefined" ? estado : ""} [${HandTracker.gestoNombre}]`);
   }
 }
 
@@ -297,7 +412,7 @@ function verificarPuno(landmarks) {
   for (const [tip, pip] of pares) {
     const dTip = dist2D(landmarks[tip], wrist);
     const dPip = dist2D(landmarks[pip], wrist);
-    if (dTip < dPip * 1.1) {
+    if (dTip < dPip * 1.08) {
       dedosCerrados++;
     }
   }
@@ -305,21 +420,14 @@ function verificarPuno(landmarks) {
 }
 
 function verificarManoAbierta(landmarks) {
-  const wrist = landmarks[0];
-  let dedosAbiertos = 0;
-  const pares = [[8, 6], [12, 10], [16, 14], [20, 18]];
-
-  for (const [tip, pip] of pares) {
-    const dTip = dist2D(landmarks[tip], wrist);
-    const dPip = dist2D(landmarks[pip], wrist);
-    if (dTip > dPip * 1.25) {
-      dedosAbiertos++;
-    }
-  }
-  return dedosAbiertos >= 3;
+  return !verificarPuno(landmarks);
 }
 
 function actualizarEstadoUI(tipo, texto) {
+  if (tipo === ultimoTipoUI && texto === ultimoTextoUI) return;
+  ultimoTipoUI = tipo;
+  ultimoTextoUI = texto;
+
   const dot = document.getElementById("status-dot");
   const txt = document.getElementById("status-text");
   if (dot) dot.className = `status-dot ${tipo}`;
