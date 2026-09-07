@@ -147,9 +147,9 @@
     }
 
     .start-btn {
-      padding: 14px 36px;
+      padding: 16px 40px;
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 700;
       color: #000;
       background: linear-gradient(135deg, #00ffcc, #00bbff);
       border: none;
@@ -157,6 +157,13 @@
       cursor: pointer;
       box-shadow: 0 0 25px rgba(0, 220, 255, 0.6);
       transition: transform 0.2s, box-shadow 0.2s;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+      pointer-events: auto;
+      position: relative;
+      z-index: 100000;
     }
 
     .start-btn:active, .start-btn:hover {
@@ -193,7 +200,7 @@
 <body>
 
   <!-- Overlay de inicio para desbloquear cámara y sonido en navegadores móviles -->
-  <div id="start-overlay">
+  <div id="start-overlay" style="z-index: 99999; touch-action: auto;">
     <div class="start-title">NEON SYSTEM</div>
     <div class="start-subtitle">
       Experiencia interactiva de 9 estados controlada por visión gestual de manos o interacción táctil/ratón.
@@ -228,19 +235,23 @@
 
   <script>
     let experienciaIniciada = false;
+    window.experienciaIniciada = false;
 
     function iniciarExperiencia() {
       if (experienciaIniciada) return;
       experienciaIniciada = true;
+      window.experienciaIniciada = true;
 
       // Desbloquear AudioContext en móviles
       if (typeof userStartAudio === 'function') {
-        userStartAudio();
+        try { userStartAudio(); } catch (e) {}
       }
 
       const overlay = document.getElementById('start-overlay');
-      overlay.classList.add('hidden');
-      setTimeout(() => { overlay.style.display = 'none'; }, 600);
+      if (overlay) {
+        overlay.classList.add('hidden');
+        setTimeout(() => { overlay.style.display = 'none'; }, 600);
+      }
 
       // Iniciar MediaPipe con cámara frontal
       if (typeof initHandDetector === 'function') {
@@ -248,11 +259,23 @@
       }
     }
 
-    function alternarCamara() {
-      if (typeof switchCameraFacingMode === 'function') {
-        switchCameraFacingMode();
-      }
+    // Asegurar registro de toque inmediato en móviles iOS / Android
+    const btnIniciar = document.getElementById('btn-iniciar');
+    if (btnIniciar) {
+      ['pointerdown', 'touchstart', 'click'].forEach(evt => {
+        btnIniciar.addEventListener(evt, function(e) {
+          e.stopPropagation();
+          iniciarExperiencia();
+        }, { passive: true });
+      });
     }
+
+    // Delegar alternarCamara a detector.js
+    window.switchCameraFacingMode = function() {
+      if (typeof alternarCamara === 'function') {
+        alternarCamara();
+      }
+    };
   </script>
 </body>
 </html>
