@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NEON SYSTEM - 9 Estados (Web Edition)</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #ffffff;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1;
+    }
+
+    /* Video de cámara oculto para MediaPipe */
+    #webcam {
+      display: none;
+    }
+
+    /* Mini vista previa opcional de la cámara en esquina */
+    #cam-preview-container {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      width: 120px;
+      height: 90px;
+      border: 1.5px solid rgba(0, 220, 255, 0.4);
+      border-radius: 8px;
+      overflow: hidden;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      cursor: pointer;
+    }
+
+    #cam-preview-container.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.8);
+    }
+
+    #cam-debug-canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* Modo espejo */
+    }
+
+    /* Barra de estado superior */
+    #top-bar {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(10, 15, 25, 0.75);
+      border: 1px solid rgba(0, 220, 255, 0.25);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      z-index: 10;
+      pointer-events: auto;
+      backdrop-filter: blur(8px);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      box-shadow: 0 0 8px #888;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .status-dot.active {
+      background: #00ff88;
+      box-shadow: 0 0 10px #00ff88;
+    }
+
+    .status-dot.detecting {
+      background: #00d4ff;
+      box-shadow: 0 0 10px #00d4ff;
+    }
+
+    .status-dot.waiting {
+      background: #ffaa00;
+      box-shadow: 0 0 10px #ffaa00;
+    }
+
+    .control-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      cursor: pointer;
+      outline: none;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .control-btn:hover, .control-btn:active {
+      background: rgba(0, 220, 255, 0.25);
+      border-color: #00dcff;
+    }
+
+
+    /* Pantalla inicial para habilitar audio y cámara en móviles */
+    #start-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: radial-gradient(circle at center, #111a2e 0%, #05070d 100%);
+      z-index: 99;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+      transition: opacity 0.5s ease;
+    }
+
+    #start-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .start-title {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      margin-bottom: 12px;
+      color: #00dcff;
+      text-shadow: 0 0 15px rgba(0, 220, 255, 0.6);
+    }
+
+    .start-subtitle {
+      font-size: 15px;
+      color: #a0aec0;
+      max-width: 440px;
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+
+    .start-btn {
+      padding: 14px 36px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #000;
+      background: linear-gradient(135deg, #00ffcc, #00bbff);
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 0 25px rgba(0, 220, 255, 0.6);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .start-btn:active, .start-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 35px rgba(0, 220, 255, 0.9);
+    }
+
+    .instructions-box {
+      margin-top: 30px;
+      padding: 16px 20px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      max-width: 400px;
+      font-size: 13px;
+      color: #8fa0b5;
+      line-height: 1.6;
+      text-align: left;
+    }
+
+    .instructions-box b {
+      color: #fff;
+    }
+  </style>
+
+  <!-- p5.js y p5.sound -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+
+  <!-- MediaPipe Hands & Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+  <!-- Overlay de inicio para desbloquear cámara y sonido en navegadores móviles -->
+  <div id="start-overlay">
+    <div class="start-title">NEON SYSTEM</div>
+    <div class="start-subtitle">
+      Experiencia interactiva de 9 estados controlada por visión gestual de manos o interacción táctil/ratón.
+    </div>
+    <button id="btn-iniciar" class="start-btn" onclick="iniciarExperiencia()">📷 PERMITIR CÁMARA Y COMENZAR</button>
+    <p style="margin-top: 14px; font-size: 13px; color: #00dcff;">Tu navegador te pedirá permiso para usar la cámara web.</p>
+    <div class="instructions-box">
+      <b>🎮 Cómo interactuar:</b><br>
+      • <b>Cámara:</b> Al hacer clic se solicitará permiso para la captura de video.<br>
+      • <b>Menú:</b> Cierra el puño para recorrer las 9 celdas.<br>
+      • <b>Selección:</b> Abre la mano durante 2 segundos para entrar.<br>
+      • <b>Pantalla táctil / Ratón:</b> También puedes tocar o mantener presionado 2 segundos sobre cualquier celda.
+    </div>
+  </div>
+
+  <!-- Barra de estado -->
+  <div id="top-bar">
+    <div id="status-dot" class="status-dot waiting"></div>
+    <span id="status-text">Esperando permiso de cámara...</span>
+    <button class="control-btn" id="btn-toggle-cam" onclick="toggleCamPreview()">Previsualizar</button>
+    <button class="control-btn" id="btn-switch-cam" onclick="alternarCamara()">Cambiar Cámara</button>
+  </div>
+
+
+  <!-- Contenedor del Canvas p5.js -->
+  <div id="canvas-container"></div>
+
+  <!-- Video webcam (procesado por MediaPipe) -->
+  <video id="webcam" playsinline autoplay muted></video>
+
+  <!-- Mini preview visual de la cámara -->
+  <div id="cam-preview-container" title="Click para ocultar/mostrar">
+    <canvas id="cam-debug-canvas"></canvas>
+  </div>
+
+  <!-- Scripts del proyecto -->
+  <script src="detector.js"></script>
+  <script src="sketch.js"></script>
+
+  <script>
+    let experienciaIniciada = false;
+
+    function iniciarExperiencia() {
+      if (experienciaIniciada) return;
+      experienciaIniciada = true;
+
+      // Desbloquear AudioContext en móviles
+      if (typeof userStartAudio === 'function') {
+        userStartAudio();
+      }
+
+      const overlay = document.getElementById('start-overlay');
+      overlay.classList.add('hidden');
+      setTimeout(() => { overlay.style.display = 'none'; }, 600);
+
+      // Iniciar MediaPipe con cámara frontal
+      if (typeof initHandDetector === 'function') {
+        initHandDetector();
+      }
+    }
+
+    function toggleCamPreview() {
+      const el = document.getElementById('cam-preview-container');
+      el.classList.toggle('hidden');
+    }
+
+    function alternarCamara() {
+      if (typeof switchCameraFacingMode === 'function') {
+        switchCameraFacingMode();
+      }
+    }
+  </script>
+</body>
+</html>
