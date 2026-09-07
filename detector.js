@@ -1,5 +1,6 @@
 // ============================================================
 // DETECTOR.JS — SEGUIMIENTO DE MANOS Y GESTOS CON MEDIAPIPE
+// Optimizado para alta velocidad (Lite Model) y baja latencia
 // ============================================================
 
 // Objeto de estado global compartido con sketch.js
@@ -11,9 +12,6 @@ const HandTracker = {
   // Coordenadas normalizadas [0..1] en modo espejo
   manoX: 0.5,
   manoY: 0.5,
-  
-  // Ambas manos si están presentes
-  manos: [],
   
   // Gestos
   esPuno: false,
@@ -27,18 +25,17 @@ const HandTracker = {
   tiempoInicioApertura: 0,
   
   // Lateralidad
-  manoPrincipal: "Right", // "Left" o "Right"
+  manoPrincipal: "Right",
   
   // Configuración de cámara
   facingMode: "user" // "user" (frontal) o "environment" (trasera)
 };
 
 let videoElement = null;
-let debugCanvas = null;
-let debugCtx = null;
 let mpHands = null;
 let cameraHelper = null;
 let seleccionConfirmada = false;
+let isProcessingFrame = false;
 
 let listaCamaras = [];
 let indiceCamaraActual = 0;
@@ -50,27 +47,19 @@ let esComputadora = !(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera 
 
 function initHandDetector() {
   videoElement = document.getElementById("webcam");
-  debugCanvas = document.getElementById("cam-debug-canvas");
-  if (debugCanvas) {
-    debugCtx = debugCanvas.getContext("2d");
-  }
 
-  // Verificación de seguridad para computadoras en file://
-  if (window.location.protocol === "file:") {
-    alert("⚠️ AVISO PARA COMPUTADORAS:\n\nTu navegador (Chrome/Edge/Firefox) bloquea el acceso a la cámara en archivos locales (file:///).\n\nPara que la cámara funcione en tu compu:\n1. Sube la carpeta a GitHub Pages (https://) o\n2. Ábrela con un servidor local (por ejemplo con la extensión 'Live Server' de VS Code o ejecutando 'python -m http.server 8000').");
-  }
-
-  actualizarEstadoUI("waiting", "Iniciando MediaPipe Hands...");
+  actualizarEstadoUI("waiting", "Iniciando MediaPipe Hands (Modo Rápido)...");
 
   mpHands = new Hands({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
   });
 
+  // modelComplexity 0 = Lite (3x más rápido, perfecto para 60 FPS en web/móvil)
   mpHands.setOptions({
-    maxNumHands: 2,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    maxNumHands: 1, // 1 mano principal ahorra 50% de procesamiento
+    modelComplexity: 0,
+    minDetectionConfidence: 0.45,
+    minTrackingConfidence: 0.45
   });
 
   mpHands.onResults(onHandResults);
@@ -80,11 +69,10 @@ function initHandDetector() {
 
 // Iniciar cámara y solicitar permisos explícitos al navegador
 async function iniciarStreamCamara(deviceIdDeseado = null) {
-  actualizarEstadoUI("waiting", "Esperando permiso de cámara en el navegador...");
+  actualizarEstadoUI("waiting", "Esperando permiso de cámara...");
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     actualizarEstadoUI("waiting", "Navegador sin soporte de cámara WebRTC.");
-    alert("Tu navegador no soporta o bloquea la captura de cámara en este entorno.");
     return;
   }
 
@@ -93,27 +81,25 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
     cameraHelper = null;
   }
 
-  if (videoElement.srcObject) {
+  if (videoElement && videoElement.srcObject) {
     try {
       videoElement.srcObject.getTracks().forEach(track => track.stop());
     } catch (e) {}
   }
 
-  // Configurar restricciones según sea computadora o celular
+  // Resolución optimizada (480x360 es ideal: rápida y muy precisa para MediaPipe)
   let videoConstraints = {
-    width: { ideal: 640 },
-    height: { ideal: 480 }
+    width: { ideal: 480, max: 640 },
+    height: { ideal: 360, max: 480 }
   };
 
   if (deviceIdDeseado) {
     videoConstraints.deviceId = { exact: deviceIdDeseado };
   } else if (!esComputadora) {
-    // En celulares/tablets usar cámara frontal por defecto
     videoConstraints.facingMode = HandTracker.facingMode;
   }
 
   try {
-    // Dispara el diálogo de permiso nativo del navegador ("Permitir usar tu cámara")
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: videoConstraints
@@ -123,43 +109,40 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
     await videoElement.play();
 
     HandTracker.camaraLista = true;
-
-    // Obtener la lista de cámaras disponibles en la computadora/móvil
     await actualizarListaCamaras();
 
-    // Obtener el nombre de la cámara en uso
     const tracks = stream.getVideoTracks();
-    const nombreCam = tracks.length > 0 && tracks[0].label ? tracks[0].label : (esComputadora ? "Cámara de la Computadora" : "Cámara Frontal");
+    const nombreCam = tracks.length > 0 && tracks[0].label ? tracks[0].label : (esComputadora ? "Cámara Web" : "Cámara Frontal");
     actualizarEstadoUI("active", `Cámara activa: ${nombreCam}`);
 
-    // Iniciar loop de detección con MediaPipe
+    // Bucle con guardia para evitar apilamiento de cuadros
     cameraHelper = new Camera(videoElement, {
       onFrame: async () => {
+        if (isProcessingFrame) return;
         if (videoElement && videoElement.readyState >= 2) {
-          await mpHands.send({ image: videoElement });
+          isProcessingFrame = true;
+          try {
+            await mpHands.send({ image: videoElement });
+          } catch (err) {
+            // Ignorar errores esporádicos en frames
+          } finally {
+            isProcessingFrame = false;
+          }
         }
       },
-      width: 640,
-      height: 480
+      width: 480,
+      height: 360
     });
     cameraHelper.start();
 
   } catch (err) {
-    console.warn("[!] Error al iniciar captura de cámara con restricciones primarias:", err);
+    console.warn("[!] Error al iniciar captura primaria:", err);
 
     if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-      actualizarEstadoUI("waiting", "Permiso denegado. Permite la cámara en la barra de direcciones.");
-      alert("⚠️ Permiso de cámara denegado.\n\nPor favor haz clic en el icono del candado o la cámara en la barra de direcciones de tu navegador y selecciona 'Permitir'.");
+      actualizarEstadoUI("waiting", "Permiso denegado. Permite la cámara en el navegador.");
       return;
     }
 
-    if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-      actualizarEstadoUI("waiting", "No se detectó ninguna cámara en esta compu.");
-      alert("No se encontró ninguna cámara conectada en tu computadora.");
-      return;
-    }
-
-    // Intento con restricciones genéricas mínimas { video: true }
     try {
       const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
       videoElement.srcObject = fallbackStream;
@@ -167,43 +150,42 @@ async function iniciarStreamCamara(deviceIdDeseado = null) {
 
       HandTracker.camaraLista = true;
       await actualizarListaCamaras();
-
-      actualizarEstadoUI("active", "Cámara conectada. Buscando manos...");
+      actualizarEstadoUI("active", "Cámara conectada.");
 
       cameraHelper = new Camera(videoElement, {
         onFrame: async () => {
+          if (isProcessingFrame) return;
           if (videoElement && videoElement.readyState >= 2) {
-            await mpHands.send({ image: videoElement });
+            isProcessingFrame = true;
+            try {
+              await mpHands.send({ image: videoElement });
+            } finally {
+              isProcessingFrame = false;
+            }
           }
         },
-        width: 640,
-        height: 480
+        width: 480,
+        height: 360
       });
       cameraHelper.start();
     } catch (e2) {
-      console.error("[X] Imposible acceder a la cámara:", e2);
-      actualizarEstadoUI("waiting", "Sin cámara. Usa interacción táctil o ratón.");
+      console.error("[X] Imposible acceder a cámara:", e2);
+      actualizarEstadoUI("waiting", "Sin cámara. Usa táctil o ratón.");
     }
   }
 }
 
-// Obtener todas las cámaras conectadas a la computadora
 async function actualizarListaCamaras() {
   try {
     const dispositivos = await navigator.mediaDevices.enumerateDevices();
     listaCamaras = dispositivos.filter(d => d.kind === "videoinput");
-    console.log(`[✓] Cámaras detectadas en la computadora (${listaCamaras.length}):`, listaCamaras.map(c => c.label));
-  } catch (e) {
-    console.warn("No se pudieron enumerar las cámaras:", e);
-  }
+  } catch (e) {}
 }
 
-// Cambiar o alternar entre cámaras disponibles (útil en compu con varias cámaras o en celular frontal/trasera)
 function alternarCamara() {
   if (listaCamaras.length > 1) {
     indiceCamaraActual = (indiceCamaraActual + 1) % listaCamaras.length;
     const proximaCamara = listaCamaras[indiceCamaraActual];
-    console.log("Cambiando a cámara:", proximaCamara.label);
     iniciarStreamCamara(proximaCamara.deviceId);
   } else {
     HandTracker.facingMode = HandTracker.facingMode === "user" ? "environment" : "user";
@@ -216,9 +198,6 @@ function alternarCamara() {
 // ============================================================
 
 function onHandResults(results) {
-  // Dibujar preview en el mini canvas
-  dibujarDebugCanvas(results);
-
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
     HandTracker.activo = false;
     HandTracker.numManos = 0;
@@ -235,35 +214,31 @@ function onHandResults(results) {
   HandTracker.activo = true;
   HandTracker.numManos = results.multiHandLandmarks.length;
 
-  // Tomamos la mano principal (primera detectada)
   const landmarks = results.multiHandLandmarks[0];
   const handedness = results.multiHandedness && results.multiHandedness[0] 
     ? results.multiHandedness[0].label 
     : "Right";
   HandTracker.manoPrincipal = handedness;
 
-  // Extraer posición normalizada de la palma (promedio de muñeca y base de dedos)
-  // En modo espejo, invertimos X para que el movimiento sea natural
-  const rawX = (landmarks[0].x + landmarks[9].x) / 2.0;
-  const rawY = (landmarks[0].y + landmarks[9].y) / 2.0;
-  HandTracker.manoX = 1.0 - rawX; // Espejo horizontal
+  // Centro de la palma normalizado en modo espejo
+  const rawX = (landmarks[0].x + landmarks[9].x) * 0.5;
+  const rawY = (landmarks[0].y + landmarks[9].y) * 0.5;
+  HandTracker.manoX = 1.0 - rawX;
   HandTracker.manoY = rawY;
 
-  // Clasificación de gestos
+  // Clasificación geométrica
   const esPuno = verificarPuno(landmarks);
   const esAbierta = verificarManoAbierta(landmarks);
 
   HandTracker.esPuno = esPuno;
   HandTracker.esAbierta = esAbierta;
-  HandTracker.gestoActivo = esPuno || esAbierta || (results.multiHandLandmarks.length > 1);
+  HandTracker.gestoActivo = esPuno || esAbierta;
 
-  // ----------------------------------------------------------
-  // LÓGICA DE MENÚ (CUADRÍCULA 3x3)
-  // ----------------------------------------------------------
-  if (typeof estado !== "undefined" && estado === 0) { // estado === MENU
+  // Lógica del menú principal
+  if (typeof estado !== "undefined" && estado === 0) {
     const col = Math.min(2, Math.max(0, Math.floor(HandTracker.manoX * 3)));
     const row = Math.min(2, Math.max(0, Math.floor(HandTracker.manoY * 3)));
-    const celda = row * 3 + col; // 0..8
+    const celda = row * 3 + col;
 
     HandTracker.celdaHover = celda;
 
@@ -275,7 +250,7 @@ function onHandResults(results) {
         seleccionConfirmada = false;
       } else {
         const transcurrido = Date.now() - HandTracker.tiempoInicioApertura;
-        HandTracker.progresoSeleccion = Math.min(1.0, transcurrido / 2000.0); // 2 segundos
+        HandTracker.progresoSeleccion = Math.min(1.0, transcurrido / 2000.0);
 
         if (HandTracker.progresoSeleccion >= 1.0 && !seleccionConfirmada) {
           seleccionConfirmada = true;
@@ -287,7 +262,6 @@ function onHandResults(results) {
       }
       actualizarEstadoUI("detecting", `Seleccionando Estado ${celda + 1} (${Math.round(HandTracker.progresoSeleccion * 100)}%)`);
     } else {
-      // Puño cerrado o mano no abierta: solo navega / hover
       HandTracker.estadoSeleccion = -1;
       HandTracker.progresoSeleccion = 0;
       seleccionConfirmada = false;
@@ -298,7 +272,6 @@ function onHandResults(results) {
       }
     }
   } else {
-    // Dentro de un estado
     HandTracker.celdaHover = -1;
     HandTracker.estadoSeleccion = -1;
     HandTracker.progresoSeleccion = 0;
@@ -346,51 +319,9 @@ function verificarManoAbierta(landmarks) {
   return dedosAbiertos >= 3;
 }
 
-// ============================================================
-// DIBUJO DE FEEDBACK EN MINI CANVAS
-// ============================================================
-
-function dibujarDebugCanvas(results) {
-  if (!debugCtx || !debugCanvas) return;
-
-  if (debugCanvas.width !== videoElement.videoWidth && videoElement.videoWidth > 0) {
-    debugCanvas.width = videoElement.videoWidth;
-    debugCanvas.height = videoElement.videoHeight;
-  }
-
-  debugCtx.save();
-  debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-
-  if (videoElement && videoElement.readyState >= 2) {
-    debugCtx.drawImage(videoElement, 0, 0, debugCanvas.width, debugCanvas.height);
-  }
-
-  if (results.multiHandLandmarks) {
-    for (const lms of results.multiHandLandmarks) {
-      // Dibujar esqueleto de mano
-      debugCtx.strokeStyle = "#00ffcc";
-      debugCtx.lineWidth = 3;
-      debugCtx.fillStyle = "#ff0066";
-
-      for (let i = 0; i < lms.length; i++) {
-        const x = lms[i].x * debugCanvas.width;
-        const y = lms[i].y * debugCanvas.height;
-        debugCtx.beginPath();
-        debugCtx.arc(x, y, 4, 0, 2 * Math.PI);
-        debugCtx.fill();
-      }
-    }
-  }
-  debugCtx.restore();
-}
-
 function actualizarEstadoUI(tipo, texto) {
   const dot = document.getElementById("status-dot");
   const txt = document.getElementById("status-text");
-  if (dot) {
-    dot.className = `status-dot ${tipo}`;
-  }
-  if (txt) {
-    txt.innerText = texto;
-  }
+  if (dot) dot.className = `status-dot ${tipo}`;
+  if (txt) txt.innerText = texto;
 }

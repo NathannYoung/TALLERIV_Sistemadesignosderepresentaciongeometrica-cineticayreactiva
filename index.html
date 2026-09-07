@@ -39,34 +39,9 @@
       display: none;
     }
 
-    /* Mini vista previa opcional de la cámara en esquina */
-    #cam-preview-container {
-      position: fixed;
-      bottom: 12px;
-      right: 12px;
-      width: 120px;
-      height: 90px;
-      border: 1.5px solid rgba(0, 220, 255, 0.4);
-      border-radius: 8px;
-      overflow: hidden;
-      z-index: 10;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(4px);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-      cursor: pointer;
-    }
-
-    #cam-preview-container.hidden {
-      opacity: 0;
-      pointer-events: none;
-      transform: scale(0.8);
-    }
-
-    #cam-debug-canvas {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform: scaleX(-1); /* Modo espejo */
+    /* Video de cámara oculto para MediaPipe */
+    #webcam {
+      display: none;
     }
 
     /* Barra de estado superior */
@@ -238,21 +213,14 @@
   <div id="top-bar">
     <div id="status-dot" class="status-dot waiting"></div>
     <span id="status-text">Esperando permiso de cámara...</span>
-    <button class="control-btn" id="btn-toggle-cam" onclick="toggleCamPreview()">Previsualizar</button>
     <button class="control-btn" id="btn-switch-cam" onclick="alternarCamara()">Cambiar Cámara</button>
   </div>
-
 
   <!-- Contenedor del Canvas p5.js -->
   <div id="canvas-container"></div>
 
   <!-- Video webcam (procesado por MediaPipe) -->
   <video id="webcam" playsinline autoplay muted></video>
-
-  <!-- Mini preview visual de la cámara -->
-  <div id="cam-preview-container" title="Click para ocultar/mostrar">
-    <canvas id="cam-debug-canvas"></canvas>
-  </div>
 
   <!-- Scripts del proyecto -->
   <script src="detector.js"></script>
@@ -278,11 +246,6 @@
       if (typeof initHandDetector === 'function') {
         initHandDetector();
       }
-    }
-
-    function toggleCamPreview() {
-      const el = document.getElementById('cam-preview-container');
-      el.classList.toggle('hidden');
     }
 
     function alternarCamara() {

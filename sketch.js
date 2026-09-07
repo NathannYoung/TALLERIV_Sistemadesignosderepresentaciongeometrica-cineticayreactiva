@@ -1,7 +1,8 @@
 // ============================================================
 // NEON SYSTEM — WEB EDITION (p5.js)
 // Port 1:1 idéntico al sistema Processing 4
-// Mismas velocidades, tamaños, comportamientos y previews
+// Mismas velocidades, tamaños, comportamientos e interacciones
+// Optimizado para alta velocidad (60 FPS) y soporte táctil / gestual
 // ============================================================
 
 const MENU = 0;
@@ -53,7 +54,7 @@ let estadoSeleccionMouse = -1;
 let inicioMouseSeleccion = 0;
 const tiempoSeleccion = 2000; // 2 segundos
 
-// Control de interacción dentro de estados (retorno automático tras 8 segundos)
+// Control de inactividad dentro de estados (retorno automático tras 8 segundos)
 let ultimaActividadEstado = 0;
 const TIEMPO_INACTIVIDAD_ESTADO = 8000;
 
@@ -167,6 +168,10 @@ function preload() {
 // SETUP
 // ============================================================
 function setup() {
+  // CRÍTICO: pixelDensity(1) evita que pantallas Retina / 4K / móviles
+  // multipliquen por 4x o 9x el costo de renderizado por cuadro
+  pixelDensity(1);
+
   const canvas = createCanvas(windowWidth, windowHeight);
   canvas.parent('canvas-container');
   frameRate(60);
@@ -197,10 +202,7 @@ function setup() {
   calcularDimensiones();
   tiempoInactividadMenu = millis();
 
-  // Inicializar todas las partículas de preview con valores exactos
   inicializarPreviews();
-
-  // Inicializar estados activos
   inicializarEstadosActivos();
 }
 
@@ -214,9 +216,6 @@ function calcularDimensiones() {
   celdaH = (height - margen * 4) / 3.0;
 }
 
-// ============================================================
-// INICIALIZACIÓN DE PREVIEWS EXACTOS (1:1 CON PROCESSING)
-// ============================================================
 function inicializarPreviews() {
   // Preview 2
   for (let i = 0; i < CANTIDAD_PARTICULAS_PREVIEW_E2; i++) {
@@ -232,14 +231,14 @@ function inicializarPreviews() {
   for (let i = 0; i < CANTIDAD_PARTICULAS_E3; i++) {
     previewX3[i] = random(-600, 600);
     previewY3[i] = random(-350, 350);
-    while (dist(previewX3[i], previewY3[i], 0, 0) < 78 + 40) {
+    while (dist(previewX3[i], previewY3[i], 0, 0) < 130) {
       previewX3[i] = random(-600, 600);
       previewY3[i] = random(-350, 350);
     }
-    let angulo = random(TWO_PI);
+    let ang = random(TWO_PI);
     let vel = random(0.45, 0.55);
-    previewVX3[i] = Math.cos(angulo) * vel;
-    previewVY3[i] = Math.sin(angulo) * vel;
+    previewVX3[i] = Math.cos(ang) * vel;
+    previewVY3[i] = Math.sin(ang) * vel;
     previewFase3[i] = random(TWO_PI);
     previewFrecuencia3[i] = random(0.008, 0.020);
     previewTam3[i] = random(20, 35);
@@ -334,8 +333,11 @@ function draw() {
     dibujarMenu();
 
   } else {
-    // Control de inactividad: si pasan 8 segundos sin interacción, vuelve automáticamente al menú
-    if (hayInteraccionActiva()) {
+    // Control de inactividad idéntico a Processing:
+    // Mientras el GIF se reproduce, no se cuenta inactividad
+    if (mostrarGifEstado) {
+      ultimaActividadEstado = millis();
+    } else if (interaccionValidaEstado()) {
       ultimaActividadEstado = millis();
     } else if (millis() - ultimaActividadEstado >= TIEMPO_INACTIVIDAD_ESTADO) {
       volverAlMenu();
@@ -351,7 +353,7 @@ function draw() {
     dibujarEstado(estado);
     pop();
 
-    // Dibujar GIF animado del personaje si está activo
+    // Dibujar GIF animado del personaje con transparencia (SCREEN)
     dibujarGifEstado();
   }
 }
@@ -390,12 +392,14 @@ function iniciarGifEstado(n) {
   tiempoInicioGif = millis();
 }
 
+// Render del GIF sin fondo negro usando blendMode(SCREEN)
 function dibujarGifEstado() {
   if (!mostrarGifEstado || estadoActualGif < 1 || estadoActualGif > 9) return;
 
   const transcurrido = millis() - tiempoInicioGif;
   if (transcurrido > DURACION_GIF_ESTADO) {
     mostrarGifEstado = false;
+    ultimaActividadEstado = millis(); // Comienza la inactividad de 8s al terminar el GIF
     return;
   }
 
@@ -403,11 +407,6 @@ function dibujarGifEstado() {
   if (gif && gif.width > 0) {
     push();
     resetMatrix();
-
-    noStroke();
-    rectMode(CORNER);
-    fill(0, 128); // 50%
-    rect(0, 0, width, height);
 
     let maxW = width * 0.95;
     let maxH = height * 0.88;
@@ -422,10 +421,15 @@ function dibujarGifEstado() {
 
     let yBase = height;
     translate(width / 2.0, yBase - h / 2.0);
-    scale(-1.0, 1.0);
+    scale(-1.0, 1.0); // Modo espejo horizontal idéntico a Processing
 
+    // Clave para eliminar fondo negro: SCREEN o ADD hace transparentes
+    // los píxeles negros y proyecta las líneas blancas directamente sobre la escena
+    blendMode(SCREEN);
     imageMode(CENTER);
     image(gif, 0, 0, w, h);
+    blendMode(BLEND);
+
     pop();
   }
 }
@@ -449,6 +453,7 @@ function actualizarDemoSectoresMenu() {
     return;
   }
 
+  // 1. Al iniciar o regresar: espera 10 segundos de inactividad
   if (!secuenciaSectoresMenuActiva) {
     if (!tutorialMostradoEnMenuActual) {
       if (millis() - tiempoInactividadMenu >= 10000) {
@@ -460,6 +465,7 @@ function actualizarDemoSectoresMenu() {
       return;
     }
 
+    // 2. Repite cada 45 segundos de inactividad continua
     if (millis() - tiempoInactividadMenu >= 45000) {
       secuenciaSectoresMenuActiva = true;
       inicioSecuenciaSectores = millis();
@@ -519,9 +525,9 @@ function dibujarMarcoSectorMenu(estadoNum, progreso) {
 
     let maxH = celdaH * 1.44;
     let maxW = celdaW * 1.44;
-    let escalaImg = Math.min(maxW / img.width, maxH / img.height);
-    let wImg = img.width * escalaImg;
-    let hImg = img.height * escalaImg;
+    let factor = min(maxW / img.width, maxH / img.height);
+    let wImg = img.width * factor;
+    let hImg = img.height * factor;
 
     push();
     imageMode(CENTER);
@@ -529,6 +535,7 @@ function dibujarMarcoSectorMenu(estadoNum, progreso) {
     pop();
   }
 
+  // Rectángulo blanco dinámico
   let perimetro = (celdaW + celdaH) * 2.0;
   let recorrido = perimetro * progreso;
 
@@ -542,11 +549,11 @@ function dibujarMarcoSectorMenu(estadoNum, progreso) {
 }
 
 // ============================================================
-// DIBUJAR MENÚ (EXACTO A PROCESSING 4)
+// DIBUJO DEL MENÚ 3x3 (IDÉNTICO A PROCESSING)
 // ============================================================
-
 function dibujarMenu() {
-  background(0);
+  rectMode(CORNER);
+
   let numero = 1;
 
   for (let fila = 0; fila < 3; fila++) {
@@ -561,7 +568,6 @@ function dibujarMenu() {
       let escala = Math.min(celdaW, celdaH) / 850.0;
       scale(escala);
 
-      // Render de los previews exactos con su resolución nativa 1370x850
       switch (numero) {
         case 1: dibujarPreviewEstado1(0, 0, 1370, 850); break;
         case 2: dibujarPreviewEstado2(0, 0, 1370, 850); break;
@@ -715,17 +721,33 @@ function actualizarSeleccionMouse() {
   }
 }
 
-function touchStarted() {
-  if (estado !== MENU) {
-    interactuarEnEstado();
-  }
-  return false;
+function interaccionValidaEstado() {
+  if (mostrarGifEstado) return false;
+  return mouseIsPressed || HandTracker.gestoActivo;
 }
 
 function mousePressed() {
   if (estado !== MENU) {
-    interactuarEnEstado();
+    activarClickEstado();
   }
+}
+
+function touchStarted() {
+  if (estado !== MENU) {
+    activarClickEstado();
+  }
+  return false;
+}
+
+function mouseReleased() {
+  if (estado === 2) soltarEstado2();
+  if (estado === 3) soltarActivacionEstado3();
+}
+
+function touchEnded() {
+  if (estado === 2) soltarEstado2();
+  if (estado === 3) soltarActivacionEstado3();
+  return false;
 }
 
 function keyPressed() {
@@ -736,14 +758,18 @@ function keyPressed() {
   }
 }
 
-function hayInteraccionActiva() {
-  return mouseIsPressed || HandTracker.gestoActivo || HandTracker.activo;
+function activarClickEstado() {
+  ultimaActividadEstado = millis();
+  if (estado === 1) clickEstado1();
+  if (estado === 2) presionarEstado2();
+  if (estado === 3) iniciarActivacionEstado3();
+  if (estado === 4) clickEstado4();
+  if (estado === 5) clickEstado5();
+  if (estado === 9) clickEstado9();
 }
 
 // ============================================================
-// ============================================================
 // PREVIEWS EXACTOS DEL MENÚ (1:1 CON LOS .PDE DE PROCESSING)
-// ============================================================
 // ============================================================
 
 // PREVIEW 1: RADAR CONCÉNTRICO VIOLETA
@@ -771,8 +797,7 @@ function dibujarPreviewEstado1(centroX, centroY, anchoCelda, altoCelda) {
       let px = Math.cos(angulo) * radio;
       let py = Math.sin(angulo) * radio;
 
-      if (py - tamPunto / 2.0 <= -limiteY || py + tamPunto / 2.0 >= limiteY) continue;
-      if (px - tamPunto / 2.0 <= -limiteX || px + tamPunto / 2.0 >= limiteX) continue;
+      if (px <= -limiteX || px >= limiteX || py <= -limiteY || py >= limiteY) continue;
 
       fill(139, 99, 199, alphaAnillo);
       ellipse(px, py, tamPunto, tamPunto);
@@ -852,11 +877,10 @@ function dibujarPreviewEstado3(centroX, centroY, anchoCelda, altoCelda) {
 
   for (let i = 0; i < CANTIDAD_PARTICULAS_E3; i++) {
     let giro = Math.sin(frameCount * previewFrecuencia3[i] + previewFase3[i]) * 0.045;
-    let nuevoVX = previewVX3[i] * Math.cos(giro) - previewVY3[i] * Math.sin(giro);
-    let nuevoVY = previewVX3[i] * Math.sin(giro) + previewVY3[i] * Math.cos(giro);
-
-    previewVX3[i] = lerp(previewVX3[i], nuevoVX, 0.10);
-    previewVY3[i] = lerp(previewVY3[i], nuevoVY, 0.10);
+    let nvx = previewVX3[i] * Math.cos(giro) - previewVY3[i] * Math.sin(giro);
+    let nvy = previewVX3[i] * Math.sin(giro) + previewVY3[i] * Math.cos(giro);
+    previewVX3[i] = lerp(previewVX3[i], nvx, 0.10);
+    previewVY3[i] = lerp(previewVY3[i], nvy, 0.10);
 
     previewX3[i] += previewVX3[i];
     previewY3[i] += previewVY3[i];
@@ -883,7 +907,7 @@ function dibujarPreviewEstado3(centroX, centroY, anchoCelda, altoCelda) {
     circle(previewX3[i], previewY3[i], previewTam3[i]);
   }
 
-  // Círculo central (+25%: 150 * 1.25 = 187.5)
+  // Círculo fruta (+25%: 150 * 1.25 = 187.5)
   fill(violeta);
   circle(0, 0, 187.5 * pulso);
 
@@ -895,14 +919,14 @@ function dibujarPreviewEstado4(centroX, centroY, anchoCelda, altoCelda) {
   rectMode(CENTER);
   noStroke();
 
-  push();
-  translate(centroX, centroY);
-
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
   let radioSeguro = 110.0 * pulso;
   let limX = 640;
   let limY = 380;
   let v = 1.0;
+
+  push();
+  translate(centroX, centroY);
 
   for (let i = 0; i < CANTIDAD_PREVIEW_E4; i++) {
     if (previewDir4[i] === 0) previewX4[i] += v;
@@ -910,21 +934,10 @@ function dibujarPreviewEstado4(centroX, centroY, anchoCelda, altoCelda) {
     else if (previewDir4[i] === 2) previewX4[i] -= v;
     else if (previewDir4[i] === 3) previewY4[i] -= v;
 
-    if (previewX4[i] >= limX) {
-      previewX4[i] = limX;
-      if (previewDir4[i] === 0) previewDir4[i] = random(1) < 0.5 ? 1 : 3;
-    } else if (previewX4[i] <= -limX) {
-      previewX4[i] = -limX;
-      if (previewDir4[i] === 2) previewDir4[i] = random(1) < 0.5 ? 1 : 3;
-    }
-
-    if (previewY4[i] >= limY) {
-      previewY4[i] = limY;
-      if (previewDir4[i] === 1) previewDir4[i] = random(1) < 0.5 ? 0 : 2;
-    } else if (previewY4[i] <= -limY) {
-      previewY4[i] = -limY;
-      if (previewDir4[i] === 3) previewDir4[i] = random(1) < 0.5 ? 0 : 2;
-    }
+    if (previewX4[i] >= limX) { previewX4[i] = limX; previewDir4[i] = random(1) < 0.5 ? 1 : 3; }
+    else if (previewX4[i] <= -limX) { previewX4[i] = -limX; previewDir4[i] = random(1) < 0.5 ? 1 : 3; }
+    if (previewY4[i] >= limY) { previewY4[i] = limY; previewDir4[i] = random(1) < 0.5 ? 0 : 2; }
+    else if (previewY4[i] <= -limY) { previewY4[i] = -limY; previewDir4[i] = random(1) < 0.5 ? 0 : 2; }
 
     let d = dist(previewX4[i], previewY4[i], 0, 0);
     if (d < radioSeguro) {
@@ -946,7 +959,7 @@ function dibujarPreviewEstado4(centroX, centroY, anchoCelda, altoCelda) {
       }
     }
 
-    fill(baseParticulasAzul, 220);
+    fill(baseParticulasAzul);
     square(previewX4[i], previewY4[i], previewTam4[i]);
   }
 
@@ -957,115 +970,84 @@ function dibujarPreviewEstado4(centroX, centroY, anchoCelda, altoCelda) {
   pop();
 }
 
-// PREVIEW 5: CUADRADOS EN ANILLO AZUL
+// PREVIEW 5: CUADRADOS ORBITANDO AZULES
 function dibujarPreviewEstado5(centroX, centroY, anchoCelda, altoCelda) {
   rectMode(CENTER);
   noStroke();
 
-  let limiteX = (anchoCelda - 40) / 2.0;
-  let limiteY = altoCelda / 2.0;
+  let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
 
   push();
   translate(centroX, centroY);
 
   for (let i = 0; i < CANTIDAD_CUADRADOS5; i++) {
-    previewAngulo5[i] += 0.0025;
-    let r = previewRadio5[i] + Math.sin(frameCount * 0.016 + previewFase5[i]) * 15;
-    let px = Math.cos(previewAngulo5[i]) * r;
-    let py = Math.sin(previewAngulo5[i]) * r;
+    previewAngulo5[i] += 0.007;
+    let distBase = previewRadio5[i] + Math.sin(frameCount * 0.015 + previewFase5[i]) * 25;
+    let px = Math.cos(previewAngulo5[i]) * distBase;
+    let py = Math.sin(previewAngulo5[i]) * distBase;
 
-    if (px < -limiteX || px > limiteX || py < -limiteY || py > limiteY) continue;
-
-    fill(baseParticulasAzul, 220);
+    fill(baseParticulasAzul);
     square(px, py, previewTam5[i]);
   }
 
   // Cuadrado central (+25%: 150 * 1.25 = 187.5)
-  let pulsoPreview = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
   fill(baseCentroAzul);
-  square(0, 0, 187.5 * pulsoPreview);
+  square(0, 0, 187.5 * pulso);
 
   pop();
 }
 
-// PREVIEW 6: CUADRADOS OSCILANTES AZULES
+// PREVIEW 6: CUADRADOS EN OSCILACIÓN AZULES
 function dibujarPreviewEstado6(centroX, centroY, anchoCelda, altoCelda) {
   rectMode(CENTER);
   noStroke();
 
-  let limiteX = (anchoCelda - 40) / 2.0;
-  let limiteY = altoCelda / 2.0;
+  let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
 
   push();
   translate(centroX, centroY);
 
   for (let i = 0; i < CANTIDAD_CUADRADOS6; i++) {
-    let offsetX = obtenerOffsetX6(previewFase6[i]);
-    let offsetY = obtenerOffsetY6(previewFase6[i]);
+    let px = previewBaseX6[i] + Math.sin(frameCount * 0.012 + previewFase6[i]) * 35;
+    let py = previewBaseY6[i] + Math.cos(frameCount * 0.012 + previewFase6[i]) * 35;
 
-    let px = previewBaseX6[i] + offsetX;
-    let py = previewBaseY6[i] + offsetY;
-
-    if (px < -limiteX || px > limiteX || py < -limiteY || py > limiteY) continue;
-
-    fill(baseParticulasAzul, 220);
+    fill(baseParticulasAzul);
     square(px, py, previewTam6[i]);
   }
 
   // Cuadrado central (+25%: 150 * 1.25 = 187.5)
-  let pulsoPreview = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
   fill(baseCentroAzul);
-  square(0, 0, 187.5 * pulsoPreview);
+  square(0, 0, 187.5 * pulso);
 
   pop();
 }
 
-function obtenerOffsetX6(fase) {
-  let t = (frameCount * 1.0 + fase * 20) % 240;
-  if (t < 60) return map(t, 0, 60, -30.0, 30.0);
-  else if (t < 120) return 30.0;
-  else if (t < 180) return map(t, 120, 180, 30.0, -30.0);
-  else return -30.0;
-}
-
-function obtenerOffsetY6(fase) {
-  let t = (frameCount * 1.0 + fase * 20) % 240;
-  if (t < 60) return -30.0;
-  else if (t < 120) return map(t, 60, 120, -30.0, 30.0);
-  else if (t < 180) return 30.0;
-  else return map(t, 180, 240, 30.0, -30.0);
-}
-
-// PREVIEW 7: TRIÁNGULOS VERDES GIRATORIOS
+// PREVIEW 7: TRIÁNGULOS VERDES EN ÓRBITA Y ROTACIÓN
 function dibujarPreviewEstado7(centroX, centroY, anchoCelda, altoCelda) {
   rectMode(CENTER);
   noStroke();
 
-  let limiteX = (anchoCelda - 40) / 2.0;
-  let limiteY = altoCelda / 2.0;
+  let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
 
   push();
   translate(centroX, centroY);
 
   for (let i = 0; i < CANTIDAD_PARTICULAS_E7; i++) {
-    let movX = previewBaseX7[i] + Math.sin(frameCount * 0.042 + previewFase7[i]) * 40;
-    let movY = previewBaseY7[i] + Math.cos(frameCount * 0.038 + previewFase7[i]) * 36;
-    previewRotacion7[i] += 0.030;
-
-    if (movX < -limiteX || movX > limiteX || movY < -limiteY || movY > limiteY) continue;
+    let movLibreX = previewBaseX7[i] + Math.sin(frameCount * 0.042 + previewFase7[i]) * 40;
+    let movLibreY = previewBaseY7[i] + Math.cos(frameCount * 0.038 + previewFase7[i]) * 36;
+    let rot = previewRotacion7[i] + frameCount * 0.015;
 
     push();
-    translate(movX, movY);
-    rotate(previewRotacion7[i]);
+    translate(movLibreX, movLibreY);
+    rotate(rot);
     fill(verdeTriangulos, 190);
     trianguloEquilatero(previewTam7[i]);
     pop();
   }
 
   // Triángulo central (+25%: 220 * 1.25 = 275)
-  let pulsoPreview = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
   push();
-  scale(pulsoPreview);
+  scale(pulso);
   fill(verdeTriangulos, 230);
   trianguloEquilatero(275);
   pop();
@@ -1073,30 +1055,18 @@ function dibujarPreviewEstado7(centroX, centroY, anchoCelda, altoCelda) {
   pop();
 }
 
-// PREVIEW 8: TRIÁNGULOS VERDES EN VAIVÉN
+// PREVIEW 8: TRIÁNGULOS VERDES EN VAIVÉN DIAGONAL
 function dibujarPreviewEstado8(centroX, centroY, anchoCelda, altoCelda) {
   rectMode(CENTER);
   noStroke();
-
-  let limiteX = (anchoCelda - 40) / 2.0;
-  let limiteY = altoCelda / 2.0;
 
   push();
   translate(centroX, centroY);
 
   for (let i = 0; i < CANTIDAD_PARTICULAS_E8; i++) {
-    let factorProgresoMenu = (Math.sin(frameCount * 0.022 + previewFase8[i]) + 1.0) / 2.0;
-    previewRotacion8[i] += 0.030;
-
-    let iniX = previewBaseX8[i] - 75;
-    let iniY = previewBaseY8[i] - 75;
-    let fnX = previewBaseX8[i] + 75;
-    let fnY = previewBaseY8[i] + 75;
-
-    let movX = lerp(iniX, fnX, factorProgresoMenu);
-    let movY = lerp(iniY, fnY, factorProgresoMenu);
-
-    if (movX < -limiteX || movX > limiteX || movY < -limiteY || movY > limiteY) continue;
+    let offset = Math.sin(frameCount * 0.045 + previewFase8[i]) * 75;
+    let movX = previewBaseX8[i] + offset * 0.707;
+    let movY = previewBaseY8[i] + offset * 0.707;
 
     push();
     translate(movX, movY);
@@ -1168,39 +1138,9 @@ function trianguloEquilatero(tam) {
 
 // ============================================================
 // ============================================================
-// IMPLEMENTACIÓN DE LOS 9 ESTADOS ACTIVOS (PANTALLA COMPLETA)
+// IMPLEMENTACIÓN 1:1 DE LOS 9 ESTADOS ACTIVOS E INTERACCIONES
 // ============================================================
 // ============================================================
-
-let huellasEstado1 = [];
-let particulasEstado2 = [];
-let gruposVisualesEstado2 = [];
-let particulasEstado3 = [];
-let manchasEstado3 = [];
-let hormigasActivasE3 = 0;
-let cuadradosEstado4 = [];
-let cuadradosEstado5 = [];
-let union5 = 0;
-let cuadradosEstado6 = [];
-let union6 = 0;
-let particulasEstado7 = [];
-let incertidumbreClic7 = 0;
-let particulasEstado8 = [];
-let activacionE8 = 0;
-let particulasEstado9 = [];
-let rotacionCentralE9 = 0;
-
-function inicializarEstadosActivos() {
-  reiniciarEstado1();
-  reiniciarEstado2();
-  reiniciarEstado3();
-  reiniciarEstado4();
-  reiniciarEstado5();
-  reiniciarEstado6();
-  reiniciarEstado7();
-  reiniciarEstado8();
-  reiniciarEstado9();
-}
 
 function reiniciarEstado(n) {
   switch (n) {
@@ -1230,37 +1170,61 @@ function dibujarEstado(n) {
   }
 }
 
-function interactuarEnEstado() {
-  ultimaActividadEstado = millis();
-  if (estado === 1) clickEstado1();
-  if (estado === 3) clickEstado3();
-  if (estado === 7) incertidumbreClic7 = 1.0;
-  if (estado === 8) activacionE8 = 1.0;
-  if (estado === 9) clickEstado9();
+function inicializarEstadosActivos() {
+  reiniciarEstado1();
+  reiniciarEstado2();
+  reiniciarEstado3();
+  reiniciarEstado4();
+  reiniciarEstado5();
+  reiniciarEstado6();
+  reiniciarEstado7();
+  reiniciarEstado8();
+  reiniciarEstado9();
 }
 
 // ------------------------------------------------------------
-// ESTADO 1: RADAR Y HUELLAS (PULSOS CON VELOCIDAD 0.25)
+// ESTADO 1: RADAR Y HUELLAS (PASADO: PULSO 0.25 PX/F)
 // ------------------------------------------------------------
+let centroEstado1X = 0;
+let centroEstado1Y = 0;
+let huellasEstado1 = [];
+let ultimoClickContinuoEstado1 = 0;
+
 function reiniciarEstado1() {
+  centroEstado1X = 0;
+  centroEstado1Y = 0;
   huellasEstado1 = [];
+  ultimoClickContinuoEstado1 = millis();
 }
 
 function clickEstado1() {
-  let hx = mouseIsPressed ? mouseX - width / 2 : (HandTracker.manoX - 0.5) * width;
-  let hy = mouseIsPressed ? mouseY - height / 2 : (HandTracker.manoY - 0.5) * height;
-  huellasEstado1.push({ x: hx, y: hy, frameInicio: frameCount, alpha: 255 });
+  if (estado !== 1) return;
+  ultimaActividadEstado = millis();
+  ultimoClickContinuoEstado1 = millis();
+
+  // Guarda la huella anterior
+  huellasEstado1.push({
+    x: centroEstado1X,
+    y: centroEstado1Y,
+    frameInicio: frameCount,
+    alpha: 100.0
+  });
+
+  // Salta a una nueva posición aleatoria
+  centroEstado1X = random(-width / 2 + 100, width / 2 - 100);
+  centroEstado1Y = random(-height / 2 + 100, height / 2 - 100);
 }
 
 function dibujarEstado1() {
-  if (hayInteraccionActiva() && frameCount % 60 === 0) {
+  // Al mantener click/gesto presionado, genera una nueva huella cada 2500ms
+  if (interaccionValidaEstado() && millis() - ultimoClickContinuoEstado1 >= 2500) {
     clickEstado1();
   }
 
   push();
   noStroke();
 
-  // Radar central base
+  // Radar en el centro actual
   for (let anillo = 0; anillo < 10; anillo++) {
     let fase = (frameCount * 0.25 + anillo * 75) % 360;
     let radio = map(fase, 0, 360, 40, width / 2.0);
@@ -1270,22 +1234,21 @@ function dibujarEstado1() {
     for (let i = 0; i < cantidadPuntos; i++) {
       let tamPunto = 25 + Math.sin(anillo * 30 + i * 15) * 5;
       let angulo = TWO_PI * i / cantidadPuntos;
-      let px = Math.cos(angulo) * radio;
-      let py = Math.sin(angulo) * radio;
+      let px = centroEstado1X + Math.cos(angulo) * radio;
+      let py = centroEstado1Y + Math.sin(angulo) * radio;
 
-      let absX = px + width / 2;
-      let absY = py + height / 2;
-      if (absX <= 0 || absX >= width || absY <= 0 || absY >= height) continue;
+      // Desaparecen en bordes izquierdo, derecho, superior e inferior
+      if (px <= -width / 2 || px >= width / 2 || py <= -height / 2 || py >= height / 2) continue;
 
       fill(139, 99, 199, alphaAnillo);
       ellipse(px, py, tamPunto, tamPunto);
     }
   }
 
-  // Huellas activas
+  // Huellas históricas
   for (let h = huellasEstado1.length - 1; h >= 0; h--) {
     let huella = huellasEstado1[h];
-    huella.alpha -= 0.09;
+    huella.alpha -= 0.08;
 
     for (let anillo = 0; anillo < 10; anillo++) {
       let fase = ((frameCount - huella.frameInicio) * 0.25 + anillo * 75) % 360;
@@ -1299,16 +1262,14 @@ function dibujarEstado1() {
         let px = huella.x + Math.cos(angulo) * radio;
         let py = huella.y + Math.sin(angulo) * radio;
 
-        let absX = px + width / 2;
-        let absY = py + height / 2;
-        if (absX <= 0 || absX >= width || absY <= 0 || absY >= height) continue;
+        if (px <= -width / 2 || px >= width / 2 || py <= -height / 2 || py >= height / 2) continue;
 
         fill(139, 99, 199, alphaAnillo);
         ellipse(px, py, tamPunto, tamPunto);
       }
     }
 
-    if (huella.alpha <= 20) {
+    if (huella.alpha <= 0) {
       huellasEstado1.splice(h, 1);
     }
   }
@@ -1316,37 +1277,103 @@ function dibujarEstado1() {
   // Círculo central (+25%: 150 * 1.25 = 187.5)
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
   fill(violeta);
-  ellipse(0, 0, 187.5 * pulso, 187.5 * pulso);
+  ellipse(centroEstado1X, centroEstado1Y, 187.5 * pulso, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 2: ÓRBITAS Y CONCENTRICOS (VELOCIDAD 0.50)
+// ESTADO 2: DERIVA RADIAL Y EMISIÓN POR TANDAS
 // ------------------------------------------------------------
+let particulasEstado2 = [];
+let gruposVisualesEstado2 = [];
+let mousePresionadoEstado2 = false;
+let pulsacionProcesadaEstado2 = false;
+let numeroTandaEstado2 = 0;
+let offsetTandaEstado2 = 0;
+
 function reiniciarEstado2() {
   particulasEstado2 = [];
+  gruposVisualesEstado2 = [];
+  mousePresionadoEstado2 = false;
+  pulsacionProcesadaEstado2 = false;
+  numeroTandaEstado2 = 0;
+  offsetTandaEstado2 = 0;
+
   for (let i = 0; i < 64; i++) {
     particulasEstado2.push({
       ang: random(TWO_PI),
       dist: random(0, 650.0),
       vel: 0.50 * random(0.85, 1.15),
       fase: random(TWO_PI),
-      tam: random(20, 35)
+      tam: random(20, 35),
+      haciaGrupo: false
+    });
+  }
+}
+
+function presionarEstado2() {
+  ultimaActividadEstado = millis();
+  mousePresionadoEstado2 = true;
+  crearNuevaTandaEstado2();
+}
+
+function soltarEstado2() {
+  mousePresionadoEstado2 = false;
+  pulsacionProcesadaEstado2 = false;
+  ultimaActividadEstado = millis();
+}
+
+function crearNuevaTandaEstado2() {
+  numeroTandaEstado2++;
+  offsetTandaEstado2 = (offsetTandaEstado2 + radians(36)) % TWO_PI;
+
+  let ciclo = (numeroTandaEstado2 - 1) % 4;
+  let tipoDistancia = (ciclo < 2) ? 0 : 1;
+  let rDist = (tipoDistancia === 0) ? random(140, 220) : random(280, 420);
+
+  for (let i = 0; i < 5; i++) {
+    let ang = offsetTandaEstado2 + i * (TWO_PI / 5.0);
+    gruposVisualesEstado2.push({
+      x: Math.cos(ang) * rDist,
+      y: Math.sin(ang) * rDist,
+      tam: random(20, 35),
+      alpha: 255
     });
   }
 }
 
 function dibujarEstado2() {
+  if (interaccionValidaEstado() && frameCount % 6 === 0) {
+    // Emisión continua hacia los grupos activos
+    let ang = random(TWO_PI);
+    particulasEstado2.push({
+      ang: ang,
+      dist: 0,
+      vel: random(2.0, 3.5),
+      fase: random(TWO_PI),
+      tam: random(18, 30),
+      haciaGrupo: true
+    });
+  }
+
   push();
   noStroke();
 
-  for (let p of particulasEstado2) {
+  for (let i = particulasEstado2.length - 1; i >= 0; i--) {
+    let p = particulasEstado2[i];
     p.dist += p.vel;
-    if (p.dist > 650.0) {
-      p.dist = random(0, 30);
-      p.ang = random(TWO_PI);
-      p.vel = 0.50 * random(0.85, 1.15);
-      p.tam = random(20, 35);
+
+    if (p.haciaGrupo) {
+      if (p.dist > 550) {
+        particulasEstado2.splice(i, 1);
+        continue;
+      }
+    } else {
+      if (p.dist > 650.0) {
+        p.dist = random(0, 30);
+        p.ang = random(TWO_PI);
+      }
     }
 
     let onda = Math.sin(frameCount * 0.010 + p.fase) * 8 * (p.dist / 650.0);
@@ -1361,19 +1388,29 @@ function dibujarEstado2() {
     circle(px, py, p.tam);
   }
 
+  // Grupos visuales
+  for (let g of gruposVisualesEstado2) {
+    fill(139, 99, 199, 180);
+    circle(g.x, g.y, g.tam);
+  }
+
   // Círculo central (+25%: 150 * 1.25 = 187.5)
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.04;
   fill(violeta);
   circle(0, 0, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 3: FRUTA Y HORMIGAS (REBOTES Y MANCHAS)
+// ESTADO 3: FRUTA Y HORMIGAS EN CRUCE
 // ------------------------------------------------------------
+let particulasEstado3 = [];
+let activacionEstado3 = false;
+
 function reiniciarEstado3() {
   particulasEstado3 = [];
-  manchasEstado3 = [];
+  activacionEstado3 = false;
   for (let i = 0; i < 64; i++) {
     let ang = random(TWO_PI);
     let vel = random(0.45, 0.55);
@@ -1384,82 +1421,100 @@ function reiniciarEstado3() {
       vy: Math.sin(ang) * vel,
       fase: random(TWO_PI),
       frecuencia: random(0.008, 0.020),
-      tam: random(20, 35)
+      tam: random(20, 35),
+      hormiga: false,
+      progreso: 0
     });
   }
 }
 
-function clickEstado3() {
-  // Crear manchas al interactuar
-  for (let i = 0; i < 6; i++) {
-    manchasEstado3.push({
-      x: random(-250, 250),
-      y: random(-200, 200),
-      tam: random(30, 60),
-      alpha: 100
-    });
+function iniciarActivacionEstado3() {
+  activacionEstado3 = true;
+  ultimaActividadEstado = millis();
+}
+
+function soltarActivacionEstado3() {
+  activacionEstado3 = false;
+  for (let p of particulasEstado3) {
+    p.hormiga = false;
   }
 }
 
 function dibujarEstado3() {
-  push();
-  noStroke();
-
-  // Dibujar manchas acumuladas
-  for (let m = manchasEstado3.length - 1; m >= 0; m--) {
-    let mancha = manchasEstado3[m];
-    mancha.alpha -= 0.1;
-    fill(139, 99, 199, mancha.alpha);
-    circle(mancha.x, mancha.y, mancha.tam);
-    if (mancha.alpha <= 0) manchasEstado3.splice(m, 1);
+  if (interaccionValidaEstado()) {
+    activacionEstado3 = true;
+    ultimaActividadEstado = millis();
   }
 
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
   let radioSeguro = 78 * pulso + 15;
 
+  push();
+  noStroke();
+
   for (let p of particulasEstado3) {
-    let giro = Math.sin(frameCount * p.frecuencia + p.fase) * 0.045;
-    let nvx = p.vx * Math.cos(giro) - p.vy * Math.sin(giro);
-    let nvy = p.vx * Math.sin(giro) + p.vy * Math.cos(giro);
-    p.vx = lerp(p.vx, nvx, 0.10);
-    p.vy = lerp(p.vy, nvy, 0.10);
+    if (activacionEstado3) {
+      p.hormiga = true;
+      p.progreso += 0.008;
+      if (p.progreso >= 1.0) p.progreso = 0;
 
-    p.x += p.vx;
-    p.y += p.vy;
+      // Cruce diagonal a través del centro
+      let inicioX = -width / 2;
+      let inicioY = -height / 3;
+      let finX = width / 2;
+      let finY = height / 3;
+      p.x = lerp(inicioX, finX, p.progreso) + Math.sin(p.fase + frameCount * 0.05) * 30;
+      p.y = lerp(inicioY, finY, p.progreso) + Math.cos(p.fase + frameCount * 0.05) * 30;
 
-    let d = dist(p.x, p.y, 0, 0);
-    if (d < radioSeguro) {
-      let rep = Math.atan2(p.y, p.x);
-      p.x = Math.cos(rep) * radioSeguro;
-      p.y = Math.sin(rep) * radioSeguro;
-      let vel = dist(0, 0, p.vx, p.vy);
-      let nAng = rep + random(-0.2, 0.2);
-      p.vx = Math.cos(nAng) * vel;
-      p.vy = Math.sin(nAng) * vel;
+    } else {
+      let giro = Math.sin(frameCount * p.frecuencia + p.fase) * 0.045;
+      let nvx = p.vx * Math.cos(giro) - p.vy * Math.sin(giro);
+      let nvy = p.vx * Math.sin(giro) + p.vy * Math.cos(giro);
+      p.vx = lerp(p.vx, nvx, 0.10);
+      p.vy = lerp(p.vy, nvy, 0.10);
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      let d = dist(p.x, p.y, 0, 0);
+      if (d < radioSeguro) {
+        let rep = Math.atan2(p.y, p.x);
+        p.x = Math.cos(rep) * radioSeguro;
+        p.y = Math.sin(rep) * radioSeguro;
+        let vel = dist(0, 0, p.vx, p.vy);
+        let nAng = rep + random(-0.2, 0.2);
+        p.vx = Math.cos(nAng) * vel;
+        p.vy = Math.sin(nAng) * vel;
+      }
+
+      let limX = width / 2 - 40;
+      let limY = height / 2 - 40;
+      if (p.x < -limX) { p.x = -limX; p.vx = Math.abs(p.vx); }
+      if (p.x > limX)  { p.x = limX;  p.vx = -Math.abs(p.vx); }
+      if (p.y < -limY) { p.y = -limY; p.vy = Math.abs(p.vy); }
+      if (p.y > limY)  { p.y = limY;  p.vy = -Math.abs(p.vy); }
     }
-
-    let limX = width / 2 - 40;
-    let limY = height / 2 - 40;
-    if (p.x < -limX) { p.x = -limX; p.vx = Math.abs(p.vx); }
-    if (p.x > limX)  { p.x = limX;  p.vx = -Math.abs(p.vx); }
-    if (p.y < -limY) { p.y = -limY; p.vy = Math.abs(p.vy); }
-    if (p.y > limY)  { p.y = limY;  p.vy = -Math.abs(p.vy); }
 
     fill(139, 99, 199, 160);
     circle(p.x, p.y, p.tam);
   }
 
-  // Círculo central violeta (+25%: 150 * 1.25 = 187.5)
+  // Fruta central violeta (+25%: 150 * 1.25 = 187.5)
   fill(violeta);
   circle(0, 0, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 4: IDENTIDAD (CUADRADOS ORTOGONALES)
+// ESTADO 4: CUADRADOS ORTOGONALES Y ACOPLE AL CENTRO
 // ------------------------------------------------------------
+let cuadradosEstado4 = [];
+let cuadradosAcoplados4 = [];
+
 function reiniciarEstado4() {
   cuadradosEstado4 = [];
+  cuadradosAcoplados4 = [];
   for (let i = 0; i < 40; i++) {
     cuadradosEstado4.push({
       x: random(-width / 2 + 80, width / 2 - 80),
@@ -1472,7 +1527,32 @@ function reiniciarEstado4() {
   }
 }
 
+function clickEstado4() {
+  ultimaActividadEstado = millis();
+  crearCuadrado4();
+}
+
+function crearCuadrado4() {
+  let ang = random(TWO_PI);
+  let distSpawn = max(width, height) * 0.6;
+  let destinoDist = 187.5 * 0.5 + random(15, 45);
+
+  cuadradosAcoplados4.push({
+    x: Math.cos(ang) * distSpawn,
+    y: Math.sin(ang) * distSpawn,
+    targetX: Math.cos(ang) * destinoDist,
+    targetY: Math.sin(ang) * destinoDist,
+    tam: random(24, 38),
+    acoplado: false
+  });
+}
+
 function dibujarEstado4() {
+  if (interaccionValidaEstado() && frameCount % 35 === 0) {
+    crearCuadrado4();
+    ultimaActividadEstado = millis();
+  }
+
   push();
   rectMode(CENTER);
   noStroke();
@@ -1510,85 +1590,122 @@ function dibujarEstado4() {
       c.dir = (c.dir === 0 || c.dir === 2) ? (random(1) < 0.5 ? 1 : 3) : (random(1) < 0.5 ? 0 : 2);
     }
 
-    fill(baseParticulasAzul, 220);
+    fill(baseParticulasAzul);
     square(c.x, c.y, c.tam);
   }
 
-  // Cuadrado central (+25%: 150 * 1.25 = 187.5)
-  fill(baseCentroAzul);
+  // Cuadrados acoplados dinámicos
+  for (let ac of cuadradosAcoplados4) {
+    if (!ac.acoplado) {
+      ac.x = lerp(ac.x, ac.targetX, 0.08);
+      ac.y = lerp(ac.y, ac.targetY, 0.08);
+      if (dist(ac.x, ac.y, ac.targetX, ac.targetY) < 2) ac.acoplado = true;
+    }
+    fill(destacadoAzul);
+    square(ac.x, ac.y, ac.tam * pulso);
+  }
+
+  // Cuadrado central azul (+25%: 150 * 1.25 = 187.5)
+  fill(azul);
   square(0, 0, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 5: EMPATÍA (80 CUADRADOS EN MARCO AZUL)
+// ESTADO 5: ÓRBITA AZUL Y MARCO COLAPSABLE
 // ------------------------------------------------------------
+let cuadradosEstado5 = [];
+let union5 = 0.0;
+
 function reiniciarEstado5() {
   cuadradosEstado5 = [];
-  union5 = 0;
+  union5 = 0.0;
   for (let i = 0; i < 80; i++) {
     cuadradosEstado5.push({
-      ang: random(TWO_PI),
-      radio: random(150, 420),
-      tam: random(20, 35),
-      vel: 0.0025,
+      ang: i * (TWO_PI / 80.0),
+      radio: random(120, 500),
       fase: random(TWO_PI),
-      deriva: random(TWO_PI)
+      tam: random(20, 35)
     });
   }
 }
 
+function clickEstado5() {
+  ultimaActividadEstado = millis();
+}
+
 function dibujarEstado5() {
+  let interactuando = interaccionValidaEstado();
+  if (interactuando) {
+    ultimaActividadEstado = millis();
+    union5 = lerp(union5, 1.0, 0.025);
+  } else {
+    union5 = lerp(union5, 0.0, 0.020);
+  }
+
   push();
   rectMode(CENTER);
   noStroke();
 
-  let hayInteraccion = hayInteraccionActiva();
-  if (hayInteraccion) {
-    union5 = lerp(union5, 1.0, 0.008);
-  } else {
-    union5 = lerp(union5, 0.0, 0.010);
-  }
-
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
+  let ladoMarco = 187.5 * 1.2;
 
   for (let i = 0; i < cuadradosEstado5.length; i++) {
     let c = cuadradosEstado5[i];
-    c.ang += c.vel;
-    let r = c.radio + Math.sin(frameCount * 0.016 + c.fase) * 15;
-    let px = Math.cos(c.ang) * r;
-    let py = Math.sin(c.ang) * r;
+    c.ang += 0.007;
 
-    // Si se activa, convergen hacia el marco central
-    if (union5 > 0.01) {
-      let angMarco = i * (TWO_PI / 80);
-      let marcoX = Math.cos(angMarco) * (190 * pulso);
-      let marcoY = Math.sin(angMarco) * (190 * pulso);
-      px = lerp(px, marcoX, union5);
-      py = lerp(py, marcoY, union5);
+    // Posición orbital libre
+    let distBase = c.radio + Math.sin(frameCount * 0.015 + c.fase) * 25;
+    let libreX = Math.cos(c.ang) * distBase;
+    let libreY = Math.sin(c.ang) * distBase;
+
+    // Posición en el marco cuadrado colapsado
+    let perimFrac = (i / cuadradosEstado5.length) * 4.0;
+    let marcoX = 0;
+    let marcoY = 0;
+    if (perimFrac < 1.0) {
+      marcoX = lerp(-ladoMarco / 2, ladoMarco / 2, perimFrac);
+      marcoY = -ladoMarco / 2;
+    } else if (perimFrac < 2.0) {
+      marcoX = ladoMarco / 2;
+      marcoY = lerp(-ladoMarco / 2, ladoMarco / 2, perimFrac - 1.0);
+    } else if (perimFrac < 3.0) {
+      marcoX = lerp(ladoMarco / 2, -ladoMarco / 2, perimFrac - 2.0);
+      marcoY = ladoMarco / 2;
+    } else {
+      marcoX = -ladoMarco / 2;
+      marcoY = lerp(ladoMarco / 2, -ladoMarco / 2, perimFrac - 3.0);
     }
 
-    let colorActual = lerpColor(baseParticulasAzul, destacadoAzul, union5 * 0.6);
-    fill(colorActual, 220);
-    square(px, py, c.tam);
+    let finalX = lerp(libreX, marcoX, union5);
+    let finalY = lerp(libreY, marcoY, union5);
+
+    let col = lerpColor(baseParticulasAzul, destacadoAzul, union5);
+    fill(col);
+    square(finalX, finalY, c.tam);
   }
 
-  // Cuadrado central (+25%: 150 * 1.25 = 187.5)
+  // Cuadrado central azul (+25%: 150 * 1.25 = 187.5)
   fill(baseCentroAzul);
   square(0, 0, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 6: COLABORACIÓN (DOBLE MARCO INTERCONECTADO)
+// ESTADO 6: OSCILACIÓN CUADRADA AZUL Y ALINEACIÓN
 // ------------------------------------------------------------
+let cuadradosEstado6 = [];
+let union6 = 0.0;
+
 function reiniciarEstado6() {
   cuadradosEstado6 = [];
-  union6 = 0;
+  union6 = 0.0;
   for (let i = 0; i < 64; i++) {
     cuadradosEstado6.push({
-      bx: random(-width / 2 + 80, width / 2 - 80),
-      by: random(-height / 2 + 80, height / 2 - 80),
+      baseX: random(-650, 650),
+      baseY: random(-400, 400),
       fase: random(TWO_PI),
       tam: random(20, 35)
     });
@@ -1596,84 +1713,121 @@ function reiniciarEstado6() {
 }
 
 function dibujarEstado6() {
+  let interactuando = interaccionValidaEstado();
+  if (interactuando) {
+    ultimaActividadEstado = millis();
+    union6 = lerp(union6, 1.0, 0.025);
+  } else {
+    union6 = lerp(union6, 0.0, 0.020);
+  }
+
   push();
   rectMode(CENTER);
   noStroke();
 
-  let hayInteraccion = hayInteraccionActiva();
-  if (hayInteraccion) {
-    union6 = lerp(union6, 1.0, 0.008);
-  } else {
-    union6 = lerp(union6, 0.0, 0.010);
-  }
-
   let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
+  let lado = 187.5 * 1.5;
 
   for (let i = 0; i < cuadradosEstado6.length; i++) {
     let c = cuadradosEstado6[i];
-    let ox = obtenerOffsetX6(c.fase);
-    let oy = obtenerOffsetY6(c.fase);
-    let px = c.bx + ox;
-    let py = c.by + oy;
+    let px = c.baseX + Math.sin(frameCount * 0.012 + c.fase) * 35;
+    let py = c.baseY + Math.cos(frameCount * 0.012 + c.fase) * 35;
 
-    if (union6 > 0.01) {
-      let angDoble = i * (TWO_PI / 64);
-      let dX = Math.cos(angDoble) * (220 * pulso);
-      let dY = Math.sin(angDoble) * (220 * pulso);
-      px = lerp(px, dX, union6);
-      py = lerp(py, dY, union6);
-    }
+    // Posición en rejilla perimetral
+    let fIdx = i % 4;
+    let t = (i / 64.0);
+    let rejillaX = (fIdx === 0 || fIdx === 2) ? (t * lado * 2 - lado) : (fIdx === 1 ? lado : -lado);
+    let rejillaY = (fIdx === 1 || fIdx === 3) ? (t * lado * 2 - lado) : (fIdx === 0 ? -lado : lado);
 
-    let colorActual = lerpColor(baseParticulasAzul, destacadoAzul, union6 * 0.5);
-    fill(colorActual, 220);
-    square(px, py, c.tam);
+    let fx = lerp(px, rejillaX, union6);
+    let fy = lerp(py, rejillaY, union6);
+
+    let col = lerpColor(baseParticulasAzul, destacadoAzul, union6);
+    fill(col);
+    square(fx, fy, c.tam);
   }
 
-  // Cuadrado central (+25%: 150 * 1.25 = 187.5)
+  // Cuadrado central azul (+25%: 150 * 1.25 = 187.5)
   fill(baseCentroAzul);
   square(0, 0, 187.5 * pulso);
+
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 7: FUTURO / INCERTIDUMBRE (TRIÁNGULOS VERDES)
+// ESTADO 7: TRIÁNGULOS VERDES Y FANTASMAS (GLOW)
 // ------------------------------------------------------------
+let particulasEstado7 = [];
+let incertidumbreClic7 = 0.0;
+
 function reiniciarEstado7() {
   particulasEstado7 = [];
-  incertidumbreClic7 = 0;
+  incertidumbreClic7 = 0.0;
   for (let i = 0; i < 64; i++) {
     particulasEstado7.push({
-      bx: random(-width / 2 + 80, width / 2 - 80),
-      by: random(-height / 2 + 80, height / 2 - 80),
-      fase: random(TWO_PI),
+      baseX: random(-650, 650),
+      baseY: random(-400, 400),
       tam: random(20, 30),
-      rot: random(TWO_PI)
+      fase: random(TWO_PI),
+      rot: random(TWO_PI),
+      radioOrbita: random(160, 480)
     });
   }
 }
 
 function dibujarEstado7() {
-  if (incertidumbreClic7 > 0) incertidumbreClic7 -= 0.015;
+  if (interaccionValidaEstado()) {
+    ultimaActividadEstado = millis();
+    incertidumbreClic7 = lerp(incertidumbreClic7, 1.0, 0.055);
+  } else {
+    incertidumbreClic7 = lerp(incertidumbreClic7, 0.0, 0.045);
+  }
+
+  let p = incertidumbreClic7;
+
   push();
   noStroke();
 
-  for (let p of particulasEstado7) {
-    let movX = p.bx + Math.sin(frameCount * 0.042 + p.fase) * 40;
-    let movY = p.by + Math.cos(frameCount * 0.038 + p.fase) * 36;
-    p.rot += 0.030;
+  for (let i = 0; i < particulasEstado7.length; i++) {
+    let part = particulasEstado7[i];
+
+    // Posición libre
+    let libreX = part.baseX + Math.sin(frameCount * 0.042 + part.fase) * 40;
+    let libreY = part.baseY + Math.cos(frameCount * 0.038 + part.fase) * 36;
+
+    // Posición orbital intensa
+    let angOrbita = frameCount * 0.035 + i * (TWO_PI / 64.0);
+    let orbitaX = Math.cos(angOrbita) * part.radioOrbita;
+    let orbitaY = Math.sin(angOrbita) * part.radioOrbita;
+
+    let x = lerp(libreX, orbitaX, p);
+    let y = lerp(libreY, orbitaY, p);
+    let rot = lerp(part.rot + frameCount * 0.015, angOrbita + HALF_PI, p);
+
+    // Fantasmas de estela al interactuar
+    if (p > 0.03) {
+      let sep = lerp(0, 28, p);
+      push();
+      translate(x - Math.cos(rot) * sep, y - Math.sin(rot) * sep);
+      rotate(rot);
+      fill(verdeTriangulos, 60 * p);
+      trianguloEquilatero(part.tam * 0.9);
+      pop();
+    }
 
     push();
-    translate(movX, movY);
-    rotate(p.rot);
+    translate(x, y);
+    rotate(rot);
     fill(verdeTriangulos, 190);
-    trianguloEquilatero(p.tam);
+    trianguloEquilatero(part.tam);
     pop();
   }
 
-  // Triángulo central (+25%: 220 * 1.25 = 275)
-  let pulso = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
+  // Triángulo central verde (+25%: 220 * 1.25 = 275)
+  let pulso = 1.0 + Math.sin(frameCount * 0.025) * 0.05;
+  let pulsoExtra = (p > 0.5) ? (1.0 + Math.sin(frameCount * 0.08) * 0.08) : 1.0;
   push();
-  scale(pulso);
+  scale(pulso * pulsoExtra);
   fill(verdeTriangulos, 230);
   trianguloEquilatero(275);
   pop();
@@ -1682,15 +1836,18 @@ function dibujarEstado7() {
 }
 
 // ------------------------------------------------------------
-// ESTADO 8: FUTURO / ANSIEDAD (VAIVÉN Y LÍNEAS NERVIOSAS)
+// ESTADO 8: TRIÁNGULOS VERDES EN TENSIÓN Y SHOCKWAVE
 // ------------------------------------------------------------
+let particulasEstado8 = [];
+let activacionE8 = 0.0;
+
 function reiniciarEstado8() {
   particulasEstado8 = [];
-  activacionE8 = 0;
+  activacionE8 = 0.0;
   for (let i = 0; i < 84; i++) {
     particulasEstado8.push({
-      bx: random(-width / 2 + 80, width / 2 - 80),
-      by: random(-height / 2 + 80, height / 2 - 80),
+      baseX: random(-650, 650),
+      baseY: random(-400, 400),
       fase: random(TWO_PI),
       tam: random(20, 30),
       rot: random(TWO_PI)
@@ -1699,76 +1856,118 @@ function reiniciarEstado8() {
 }
 
 function dibujarEstado8() {
-  if (activacionE8 > 0) activacionE8 -= 0.015;
+  if (interaccionValidaEstado()) {
+    ultimaActividadEstado = millis();
+    activacionE8 = lerp(activacionE8, 1.0, 0.050);
+  } else {
+    activacionE8 = lerp(activacionE8, 0.0, 0.035);
+  }
+
+  let p = activacionE8;
+  let velTension = lerp(0.040, 0.16, p);
+  let onda = Math.sin(frameCount * velTension);
+  let pulsoTension = Math.pow(Math.max(0, onda), 6);
+
   push();
   noStroke();
 
-  for (let p of particulasEstado8) {
-    let factorProgreso = (Math.sin(frameCount * 0.022 + p.fase) + 1.0) / 2.0;
-    p.rot += 0.030;
+  for (let part of particulasEstado8) {
+    let offset = Math.sin(frameCount * 0.045 + part.fase) * (75 + 30 * p);
+    let movX = part.baseX + offset * 0.707;
+    let movY = part.baseY + offset * 0.707;
 
-    let iniX = p.bx - 75;
-    let iniY = p.by - 75;
-    let fnX = p.bx + 75;
-    let fnY = p.by + 75;
-
-    let movX = lerp(iniX, fnX, factorProgreso);
-    let movY = lerp(iniY, fnY, factorProgreso);
+    // Tensión: se contraen hacia el centro
+    let fx = lerp(movX, movX * 0.65, p);
+    let fy = lerp(movY, movY * 0.65, p);
 
     push();
-    translate(movX, movY);
-    rotate(p.rot);
+    translate(fx, fy);
+    rotate(part.rot + pulsoTension * 0.2);
     fill(verdeTriangulos, 190);
-    trianguloEquilatero(p.tam);
+    trianguloEquilatero(part.tam * (1.0 + pulsoTension * 0.3));
     pop();
   }
 
-  // Triángulo central (+25%: 165 * 1.25 = 206.25)
-  let pulso = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
+  // Triángulo central (+25%: 215 * 1.25 = 268.75)
+  let pulsoCentral = 1.0 + Math.sin(frameCount * 0.09) * (0.09 + 0.08 * p);
   push();
-  scale(pulso);
+  scale(pulsoCentral);
   fill(verdeTriangulos, 230);
-  trianguloEquilatero(206.25);
+  trianguloEquilatero(268.75);
   pop();
 
   pop();
 }
 
 // ------------------------------------------------------------
-// ESTADO 9: FUTURO / EXPECTATIVA (ÓRBITAS DINÁMICAS)
+// ESTADO 9: CAPAS MULTICAPA Y GIRO CON RETROCESO
 // ------------------------------------------------------------
+let particulasEstado9 = [];
+let activacionE9 = 0.0;
+let rotacionCentralE9 = 0.0;
+let enRetrocesoE9 = false;
+let velocidadGiroE9 = 0.05;
+
 function reiniciarEstado9() {
   particulasEstado9 = [];
-  rotacionCentralE9 = 0;
+  activacionE9 = 0.0;
+  rotacionCentralE9 = 0.0;
+  enRetrocesoE9 = false;
+  velocidadGiroE9 = 0.05;
+
   for (let i = 0; i < 100; i++) {
-    let anguloSector = TWO_PI * i / 100;
+    let anguloSector = TWO_PI * i / 100.0;
     particulasEstado9.push({
-      ang: (anguloSector + random(-0.25, 0.25) + TWO_PI) % TWO_PI,
+      ang: anguloSector,
       radio: random(115, 920),
       tam: random(20, 30),
-      rot: random(TWO_PI)
+      rotPropia: random(TWO_PI)
     });
   }
 }
 
 function clickEstado9() {
-  rotacionCentralE9 += PI / 4;
+  ultimaActividadEstado = millis();
 }
 
 function dibujarEstado9() {
-  rotacionCentralE9 += 0.0038;
+  let interactuando = interaccionValidaEstado();
+  if (interactuando) {
+    ultimaActividadEstado = millis();
+    activacionE9 = lerp(activacionE9, 1.0, 0.075);
+  } else {
+    activacionE9 = lerp(activacionE9, 0.0, 0.040);
+  }
+
+  // Giro central acelerado y retroceso
+  if (interactuando) {
+    if (enRetrocesoE9) {
+      rotacionCentralE9 = lerp(rotacionCentralE9, 0, 0.12);
+      if (Math.abs(rotacionCentralE9) < 0.05) enRetrocesoE9 = false;
+    } else {
+      rotacionCentralE9 += velocidadGiroE9 * (1.0 + activacionE9 * 2.0);
+      if (rotacionCentralE9 >= TWO_PI * 1.5) {
+        enRetrocesoE9 = true;
+      }
+    }
+  } else {
+    rotacionCentralE9 += 0.015;
+  }
+
   push();
   noStroke();
 
   for (let p of particulasEstado9) {
-    let angulo = p.ang + rotacionCentralE9;
-    p.rot += 0.030;
-    let x = Math.cos(angulo) * p.radio;
-    let y = Math.sin(angulo) * p.radio;
+    let velOrbita = 0.0038 * (1.0 + activacionE9 * 1.5);
+    p.ang += velOrbita;
+    p.rotPropia += 0.030;
+
+    let x = Math.cos(p.ang) * p.radio;
+    let y = Math.sin(p.ang) * p.radio;
 
     push();
     translate(x, y);
-    rotate(p.rot);
+    rotate(p.rotPropia);
     fill(90, 255, 175, 10);
     trianguloEquilatero(p.tam * 1.55);
     fill(75, 235, 155, 16);
@@ -1780,10 +1979,11 @@ function dibujarEstado9() {
     pop();
   }
 
-  // Triángulo central (+25%: 205 * 1.25 = 256.25)
+  // Triángulo central verde (+25%: 205 * 1.25 = 256.25)
   let respiracion = 1.0 + Math.sin(frameCount * 0.09) * 0.08;
   push();
-  scale(respiracion);
+  rotate(rotacionCentralE9);
+  scale(respiracion * (1.0 + activacionE9 * 0.15));
   fill(verdeTriangulos, 230);
   trianguloEquilatero(256.25);
   pop();
