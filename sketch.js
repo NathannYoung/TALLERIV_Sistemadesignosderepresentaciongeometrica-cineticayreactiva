@@ -797,12 +797,12 @@ let tiempoUltimoGestoValido = 0;
 
 function interaccionValidaEstado() {
   if (mostrarGifEstado) return false;
-  let hayGesto = mouseIsPressed || HandTracker.gestoActivo;
+  let hayGesto = mouseIsPressed || (HandTracker.activo && HandTracker.gestoId === estado);
   if (hayGesto) {
     tiempoUltimoGestoValido = millis();
     return true;
   }
-  // Amortiguador de gracia de 250ms para mantener interacción continua y estable en Estado 9
+  // Amortiguador de gracia de 250ms para mantener interacción continua y fluida
   return (millis() - tiempoUltimoGestoValido < 250);
 }
 
@@ -892,6 +892,7 @@ function dibujarPreviewEstado1(centroX, centroY, anchoCelda, altoCelda) {
     let alphaAnillo = map(radio, 40, radioMaxPrev, 140, 50);
     let cantidadPuntos = 20;
 
+    fill(139, 99, 199, alphaAnillo);
     for (let i = 0; i < cantidadPuntos; i++) {
       let tamPunto = 25 + Math.sin(anillo * 30 + i * 15) * 5;
       let angulo = TWO_PI * i / cantidadPuntos;
@@ -902,7 +903,6 @@ function dibujarPreviewEstado1(centroX, centroY, anchoCelda, altoCelda) {
       if (py - tamPunto / 2.0 <= -limiteY || py + tamPunto / 2.0 >= limiteY) continue;
       if (px - tamPunto / 2.0 <= -limiteX || px + tamPunto / 2.0 >= limiteX) continue;
 
-      fill(139, 99, 199, alphaAnillo);
       ellipse(px, py, tamPunto, tamPunto);
     }
   }
@@ -1279,33 +1279,20 @@ function dibujarPreviewEstado7(centroX, centroY, anchoCelda, altoCelda) {
   push();
   translate(centroX, centroY);
 
-  drawingContext.save();
-  drawingContext.beginPath();
-  drawingContext.rect(-limX, -limY, anchoRecorte, altoCelda);
-  drawingContext.clip();
-
   for (let i = 0; i < CANTIDAD_PARTICULAS_E7; i++) {
     let movX = previewBaseX7[i] + Math.sin(frameCount * 0.042 + previewFase7[i]) * 40;
     let movY = previewBaseY7[i] + Math.cos(frameCount * 0.038 + previewFase7[i]) * 36;
     previewRotacion7[i] += 0.030;
 
-    push();
-    translate(movX, movY);
-    rotate(previewRotacion7[i]);
-    fill(105, 235, 160, 190);
-    trianguloEquilatero(previewTam7[i]);
-    pop();
+    if (movX < -limX || movX > limX || movY < -limY || movY > limY) continue;
+
+    dibujarTrianguloRotadoDirecto(drawingContext, movX, movY, previewRotacion7[i], previewTam7[i], 105, 235, 160, 0.75);
   }
 
   // Triángulo central (+25%: 220 * 1.25 = 275)
-  let pulsoPreview = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
-  push();
-  scale(pulsoPreview);
-  fill(105, 235, 160, 230);
-  trianguloEquilatero(275);
-  pop();
+  let pulsoPreview7 = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
+  dibujarTrianguloRotadoDirecto(drawingContext, 0, 0, 0, 275 * pulsoPreview7, 105, 235, 160, 0.90);
 
-  drawingContext.restore();
   pop();
   rectMode(CORNER);
 }
@@ -1340,11 +1327,6 @@ function dibujarPreviewEstado8(centroX, centroY, anchoCelda, altoCelda) {
   push();
   translate(centroX, centroY);
 
-  drawingContext.save();
-  drawingContext.beginPath();
-  drawingContext.rect(-limX, -limY, anchoRecorte, altoCelda);
-  drawingContext.clip();
-
   for (let i = 0; i < CANTIDAD_PARTICULAS_E8; i++) {
     let factorProgresoMenu = (Math.sin(frameCount * 0.022 + previewFase8[i]) + 1.0) / 2.0;
     previewRotacion8[i] += 0.030;
@@ -1357,23 +1339,15 @@ function dibujarPreviewEstado8(centroX, centroY, anchoCelda, altoCelda) {
     let movX = lerp(iniX, fnX, factorProgresoMenu);
     let movY = lerp(iniY, fnY, factorProgresoMenu);
 
-    push();
-    translate(movX, movY);
-    rotate(previewRotacion8[i]);
-    fill(105, 235, 160, 190);
-    trianguloEquilatero(previewTam8[i]);
-    pop();
+    if (movX < -limX || movX > limX || movY < -limY || movY > limY) continue;
+
+    dibujarTrianguloRotadoDirecto(drawingContext, movX, movY, previewRotacion8[i], previewTam8[i], 105, 235, 160, 0.75);
   }
 
   // Triángulo central (+25%: (165 + 50) * 1.25 = 268.75)
-  let pulsoPreview = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
-  push();
-  scale(pulsoPreview);
-  fill(105, 235, 160, 230);
-  trianguloEquilatero(268.75);
-  pop();
+  let pulsoPreview8 = 1.0 + Math.sin(frameCount * 0.09) * 0.09;
+  dibujarTrianguloRotadoDirecto(drawingContext, 0, 0, 0, 268.75 * pulsoPreview8, 105, 235, 160, 0.90);
 
-  drawingContext.restore();
   pop();
   rectMode(CORNER);
 }
@@ -1402,42 +1376,50 @@ function dibujarPreviewEstado9(centroX, centroY, anchoCelda, altoCelda) {
   push();
   translate(centroX, centroY);
 
-  drawingContext.save();
-  drawingContext.beginPath();
-  drawingContext.rect(-limX, -limY, anchoRecorte, altoCelda);
-  drawingContext.clip();
-
   for (let i = 0; i < CANTIDAD_PREVIEW_E9; i++) {
     let anguloPrev = previewBaseAngulo9[i] + frameCount * 0.0038;
     previewRotacionPropia9[i] += 0.030;
     let x = Math.cos(anguloPrev) * previewBaseRadio9[i];
     let y = Math.sin(anguloPrev) * previewBaseRadio9[i];
 
-    push();
-    translate(x, y);
-    rotate(previewRotacionPropia9[i]);
-    fill(90, 255, 175, 10);
-    trianguloEquilatero(previewTamParticula9[i] * 1.55);
-    fill(75, 235, 155, 16);
-    trianguloEquilatero(previewTamParticula9[i] * 1.34);
-    fill(65, 220, 145, 24);
-    trianguloEquilatero(previewTamParticula9[i] * 1.18);
-    fill(105, 235, 160, 210);
-    trianguloEquilatero(previewTamParticula9[i]);
-    pop();
+    if (x < -limX || x > limX || y < -limY || y > limY) continue;
+
+    let tamP = previewTamParticula9[i];
+    let rot = previewRotacionPropia9[i];
+    let ctx = drawingContext;
+
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamP * 1.55, 90, 255, 175, 0.04);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamP * 1.34, 75, 235, 155, 0.06);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamP * 1.18, 65, 220, 145, 0.09);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamP, 105, 235, 160, 0.82);
   }
 
   // Triángulo central (+25%: 205 * 1.25 = 256.25)
   let respiracion = 1.0 + Math.sin(frameCount * 0.09) * 0.08;
-  push();
-  scale(respiracion);
-  fill(105, 235, 160, 230);
-  trianguloEquilatero(256.25);
-  pop();
+  dibujarTrianguloRotadoDirecto(drawingContext, 0, 0, 0, 256.25 * respiracion, 105, 235, 160, 0.90);
 
-  drawingContext.restore();
   pop();
   rectMode(CORNER);
+}
+
+// Dibujo directo optimizado de triángulos equiláteros rotados (sin matrices save/restore)
+function dibujarTrianguloRotadoDirecto(ctx, cx, cy, ang, tam, r, g, b, a) {
+  const h = tam * 0.8660254;
+  const v1y = -h * 0.67;
+  const v2x = -tam * 0.5;
+  const v2y = h * 0.33;
+  const v3x = tam * 0.5;
+
+  const cosA = Math.cos(ang);
+  const sinA = Math.sin(ang);
+
+  ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+  ctx.beginPath();
+  ctx.moveTo(cx - v1y * sinA, cy + v1y * cosA);
+  ctx.lineTo(cx + v2x * cosA - v2y * sinA, cy + v2x * sinA + v2y * cosA);
+  ctx.lineTo(cx + v3x * cosA - v2y * sinA, cy + v3x * sinA + v2y * cosA);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function trianguloEquilatero(tam) {
@@ -1580,6 +1562,7 @@ function dibujarEstado1() {
       alphaAnillo = constrain(alphaAnillo, 0, alphaH);
 
       let cantidadPuntos = 20;
+      fill(139, 99, 199, alphaAnillo);
       for (let i = 0; i < cantidadPuntos; i++) {
         let tamPunto = 25 + Math.sin(h * 50 + anillo * 30 + i * 15) * 5;
         let angulo = TWO_PI * i / cantidadPuntos;
@@ -1590,7 +1573,6 @@ function dibujarEstado1() {
         if (py - tamPunto / 2.0 <= -height / 2.0 || py + tamPunto / 2.0 >= height / 2.0) continue;
         if (px - tamPunto / 2.0 <= -width / 2.0 || px + tamPunto / 2.0 >= width / 2.0) continue;
 
-        fill(139, 99, 199, alphaAnillo);
         ellipse(px, py, tamPunto, tamPunto);
       }
     }
@@ -1610,6 +1592,7 @@ function dibujarEstado1() {
     let alphaAnillo = map(radio, 80, radioMaxE1, 90, 40);
     let cantidadPuntos = 20;
 
+    fill(139, 99, 199, alphaAnillo);
     for (let i = 0; i < cantidadPuntos; i++) {
       let tamPunto = 25 + Math.sin(anillo * 30 + i * 15) * 5;
       let angulo = TWO_PI * i / cantidadPuntos;
@@ -1619,7 +1602,6 @@ function dibujarEstado1() {
       if (py - tamPunto / 2.0 <= -height / 2.0 || py + tamPunto / 2.0 >= height / 2.0) continue;
       if (px - tamPunto / 2.0 <= -width / 2.0 || px + tamPunto / 2.0 >= width / 2.0) continue;
 
-      fill(139, 99, 199, alphaAnillo);
       ellipse(px, py, tamPunto, tamPunto);
     }
   }
@@ -1920,20 +1902,15 @@ function dibujarEstado2() {
     if (!mousePresionadoEstado2) {
       presionarEstado2();
     }
-  } else if (HandTracker.activo && HandTracker.gestoId > 0) {
+  } else if (HandTracker.activo && HandTracker.gestoId === 2) {
     ultimaActividadEstado = millis();
 
-    if (HandTracker.gestoId !== ultimoGestoEstado2) {
-      // El usuario cambió de gesto (ej. abrió la mano, cerró el puño, la levantó al hombro, etc.)
-      ultimoGestoEstado2 = HandTracker.gestoId;
-      soltarEstado2();
+    if (!mousePresionadoEstado2) {
       presionarEstado2(); // Activa exactamente una nueva tanda de 5 círculos alrededor
-    } else {
-      // Mientras mantiene el gesto, permanece activo de forma estable sin reiniciar partículas
-      mousePresionadoEstado2 = true;
+      ultimoGestoEstado2 = 2;
     }
   } else {
-    // Sin interacción activa
+    // Sin interacción activa del gesto 2
     if (mousePresionadoEstado2) {
       soltarEstado2();
     }
@@ -3069,41 +3046,18 @@ function dibujarTrianguloCentralE7(p) {
 }
 
 function dibujarTrianguloGlowE7(x, y, tam, rotacion, incertidumbre, alphaBase) {
-  push();
-  translate(x, y);
-  rotate(rotacion);
-  noStroke();
-
-  fill(90, 255, 175, 10 + incertidumbre * 8);
-  trianguloEquilatero(tam * 1.55);
-
-  fill(75, 235, 155, 16 + incertidumbre * 10);
-  trianguloEquilatero(tam * 1.34);
-
-  fill(65, 220, 145, 24 + incertidumbre * 12);
-  trianguloEquilatero(tam * 1.18);
-
-  fill(105, 235, 160, alphaBase);
-  trianguloEquilatero(tam);
-
-  pop();
+  let ctx = drawingContext;
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.55, 90, 255, 175, (10 + incertidumbre * 8) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.34, 75, 235, 155, (16 + incertidumbre * 10) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.18, 65, 220, 145, (24 + incertidumbre * 12) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam, 105, 235, 160, alphaBase / 255);
 }
 
 function dibujarTrianguloFantasmaE7(x, y, tam, rotacion, alpha) {
   if (alpha <= 0) return;
-
-  push();
-  translate(x, y);
-  rotate(rotacion);
-  noStroke();
-
-  fill(100, 255, 185, alpha * 0.22);
-  trianguloEquilatero(tam * 1.35);
-
-  fill(110, 245, 175, alpha);
-  trianguloEquilatero(tam);
-
-  pop();
+  let ctx = drawingContext;
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.35, 100, 255, 185, (alpha * 0.22) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam, 110, 245, 175, alpha / 255);
 }
 
 function suavizarE7(t) {
@@ -3217,30 +3171,19 @@ function dibujarEstado8() {
       tamActual = lerp(tamParticula8[i], random(35, 42) + Math.sin(frameCount * 0.8 + i) * 5, factorVib);
     }
 
-    push();
-    translate(finalX + vibracionX, finalY + vibracionY);
-    rotate(rotacionAleatoria8[i] + (p * 0.15 * Math.sin(frameCount * 0.08 + i)));
-
-    dibujarBrilloParticulaE8(tamActual, p);
-
-    pop();
+    let rotPart = rotacionAleatoria8[i] + (p * 0.15 * Math.sin(frameCount * 0.08 + i));
+    dibujarBrilloParticulaE8(finalX + vibracionX, finalY + vibracionY, rotPart, tamActual, p);
   }
 
   // 2. Triángulo Central
   dibujarTrianguloCentralE8(p, pulsoTension);
 }
 
-function dibujarBrilloParticulaE8(tam, ansiedad) {
-  noStroke();
-
-  fill(90, 255, 175, 15 + ansiedad * 15);
-  trianguloEquilatero(tam * 1.55);
-
-  fill(75, 235, 155, 30 + ansiedad * 20);
-  trianguloEquilatero(tam * 1.25);
-
-  fill(105, 235, 160, 230);
-  trianguloEquilatero(tam);
+function dibujarBrilloParticulaE8(x, y, rot, tam, ansiedad) {
+  let ctx = drawingContext;
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tam * 1.55, 90, 255, 175, (15 + ansiedad * 15) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tam * 1.25, 75, 235, 155, (30 + ansiedad * 20) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tam, 105, 235, 160, 230 / 255);
 }
 
 function dibujarTrianguloCentralE8(p, pulsoTension) {
@@ -3273,41 +3216,18 @@ function dibujarTrianguloCentralE8(p, pulsoTension) {
 }
 
 function dibujarTrianguloGlowE8(x, y, tam, rotacion, ansiedad, alphaBase) {
-  push();
-  translate(x, y);
-  rotate(rotacion);
-  noStroke();
-
-  fill(90, 255, 175, 9 + ansiedad * 10);
-  trianguloEquilatero(tam * 1.70);
-
-  fill(75, 235, 155, 14 + ansiedad * 13);
-  trianguloEquilatero(tam * 1.42);
-
-  fill(65, 220, 145, 25 + ansiedad * 15);
-  trianguloEquilatero(tam * 1.20);
-
-  fill(105, 235, 160, alphaBase);
-  trianguloEquilatero(tam);
-
-  pop();
+  let ctx = drawingContext;
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.70, 90, 255, 175, (9 + ansiedad * 10) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.42, 75, 235, 155, (14 + ansiedad * 13) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.20, 65, 220, 145, (25 + ansiedad * 15) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam, 105, 235, 160, alphaBase / 255);
 }
 
 function dibujarTrianguloFantasmaE8(x, y, tam, rotacion, alpha) {
   if (alpha <= 0) return;
-
-  push();
-  translate(x, y);
-  rotate(rotacion);
-  noStroke();
-
-  fill(105, 235, 160, alpha * 0.18);
-  trianguloEquilatero(tam * 1.35);
-
-  fill(105, 235, 160, alpha);
-  trianguloEquilatero(tam);
-
-  pop();
+  let ctx = drawingContext;
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam * 1.35, 105, 235, 160, (alpha * 0.18) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, x, y, rotacion, tam, 105, 235, 160, alpha / 255);
 }
 
 function suavizarE8(t) {
@@ -3434,31 +3354,17 @@ function actualizarParticulasE9(p) {
     let brillo = brilloParticulasE9[i];
     let tamActual = tamParticulaE9[i] * (1.0 + brillo * 0.35);
 
-    push();
-    translate(x, y);
-    rotate(rotacionPropiaE9[i]);
-    noStroke();
+    let ctx = drawingContext;
+    let rCore = Math.round(lerp(105, 190, brillo));
+    let gCore = Math.round(lerp(235, 255, brillo));
+    let bCore = Math.round(lerp(160, 225, brillo));
+    let aCore = lerp(210, 255, brillo) / 255;
+    let rot = rotacionPropiaE9[i];
 
-    // Capas de Glow idénticas a Estados 7 y 8
-    fill(90, 255, 175, 10 + brillo * 40);
-    trianguloEquilatero(tamActual * (1.55 + brillo * 0.40));
-
-    fill(75, 235, 155, 16 + brillo * 50);
-    trianguloEquilatero(tamActual * (1.34 + brillo * 0.25));
-
-    fill(65, 220, 145, 24 + brillo * 60);
-    trianguloEquilatero(tamActual * (1.18 + brillo * 0.15));
-
-    // Núcleo: exactamente (105, 235, 160, 210) al inicio, aumentando a blanco/verde neón intenso al impactar
-    fill(
-      lerp(105, 190, brillo),
-      lerp(235, 255, brillo),
-      lerp(160, 225, brillo),
-      lerp(210, 255, brillo)
-    );
-    trianguloEquilatero(tamActual);
-
-    pop();
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamActual * (1.55 + brillo * 0.40), 90, 255, 175, (10 + brillo * 40) / 255);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamActual * (1.34 + brillo * 0.25), 75, 235, 155, (16 + brillo * 50) / 255);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamActual * (1.18 + brillo * 0.15), 65, 220, 145, (24 + brillo * 60) / 255);
+    dibujarTrianguloRotadoDirecto(ctx, x, y, rot, tamActual, rCore, gCore, bCore, aCore);
   }
 }
 
@@ -3466,24 +3372,12 @@ function dibujarTrianguloCentralE9(p) {
   let respiracion = 1.0 + Math.sin(frameCount * 0.025) * 0.04;
   let tam = TAM_CENTRAL_E9 * respiracion;
   let intensidadGlow = lerp(0.55, 1.0, p);
+  let ctx = drawingContext;
 
-  push();
-  rotate(rotacionCentralE9);
-  noStroke();
-
-  fill(75, 235, 155, 7 * intensidadGlow);
-  trianguloEquilatero(tam * lerp(1.55, 1.95, p));
-
-  fill(85, 245, 165, 17 * intensidadGlow);
-  trianguloEquilatero(tam * lerp(1.30, 1.55, p));
-
-  fill(95, 255, 175, 35 * intensidadGlow);
-  trianguloEquilatero(tam * 1.18);
-
-  fill(105, 235, 160, 245);
-  trianguloEquilatero(tam);
-
-  pop();
+  dibujarTrianguloRotadoDirecto(ctx, 0, 0, rotacionCentralE9, tam * lerp(1.55, 1.95, p), 75, 235, 155, (7 * intensidadGlow) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, 0, 0, rotacionCentralE9, tam * lerp(1.30, 1.55, p), 85, 245, 165, (17 * intensidadGlow) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, 0, 0, rotacionCentralE9, tam * 1.18, 95, 255, 175, (35 * intensidadGlow) / 255);
+  dibujarTrianguloRotadoDirecto(ctx, 0, 0, rotacionCentralE9, tam, 105, 235, 160, 245 / 255);
 }
 
 function diferenciaAngularE9(a, b) {

@@ -287,22 +287,124 @@ function onHandResults(results) {
   HandTracker.esAbierta = manos.some(m => m.esAbierta);
   HandTracker.gestoActivo = true;
 
-  // Clasificación de gestos con histeresis
+  // ============================================================
+  // CLASIFICADOR DE LOS 9 GESTOS IDÉNTICO A MANOSV2.PY
+  // ============================================================
   let tipoGestoDetectado = 0;
   let nombreGestoDetectado = "NINGUNO";
 
   if (manos.length >= 2) {
-    tipoGestoDetectado = 5;
-    nombreGestoDetectado = "Ambas Manos";
+    // --------------------------------------------------------
+    // GESTOS DE 2 MANOS: ESTADOS 4, 5, 6
+    // --------------------------------------------------------
+    const m1 = manos[0];
+    const m2 = manos[1];
+    const dPalmas = dist2D(m1.lms[9], m2.lms[9]);
+    const dMunecas = dist2D(m1.lms[0], m2.lms[0]);
+    const dIndices = dist2D(m1.lms[8], m2.lms[8]);
+    const hyProm = (m1.hy + m2.hy) * 0.5;
+
+    // 👐 ESTADO 4: [AMBAS] Manos abiertas sobre el pecho (separadas)
+    if (!m1.esPuno && !m2.esPuno && dPalmas > 0.18 && dIndices > 0.16 && hyProm >= 0.28) {
+      tipoGestoDetectado = 4;
+      nombreGestoDetectado = "Manos Abiertas en Pecho";
+    }
+    // 🤝 ESTADO 6: [AMBAS] Dedos entrelazados con muñecas abiertas
+    else if ((dPalmas < 0.28 || dIndices < 0.24) && dMunecas > dPalmas * 1.15 && hyProm >= 0.25) {
+      tipoGestoDetectado = 6;
+      nombreGestoDetectado = "Dedos Entrelazados";
+    }
+    // 🙏 ESTADO 5: [AMBAS] Manos unidas en pecho / rezo
+    else if (dPalmas < 0.24 && dIndices < 0.24 && hyProm >= 0.22) {
+      tipoGestoDetectado = 5;
+      nombreGestoDetectado = "Manos Unidas en Pecho";
+    }
   } else if (manos.length === 1) {
+    // --------------------------------------------------------
+    // GESTOS DE 1 MANO (IZQUIERDA: 1, 2, 3 | DERECHA: 7, 8, 9)
+    // --------------------------------------------------------
     const m = manos[0];
-    const esArriba = (m.hy < 0.50); // Mano en tercio superior / hombro / cabeza
-    if (m.esPuno) {
-      tipoGestoDetectado = esArriba ? 2 : 1;
-      nombreGestoDetectado = esArriba ? "Puño Arriba / Hombro" : "Puño";
-    } else {
-      tipoGestoDetectado = esArriba ? 4 : 3;
-      nombreGestoDetectado = esArriba ? "Mano Abierta Arriba" : "Mano Abierta";
+    const lms = m.lms;
+
+    // Lateralidad robusta: etiqueta MediaPipe + posición en espejo
+    const esIzq = m.esManoIzq || (m.hx < 0.40);
+    const esDer = m.esManoDer || (m.hx > 0.60);
+
+    // Antebrazo horizontal con puño (dx_mano > dy_mano * 0.6)
+    const dxMano = Math.abs(lms[0].x - lms[9].x);
+    const dyMano = Math.abs(lms[0].y - lms[9].y);
+    const esHorizontal = (dxMano > dyMano * 0.6);
+
+    // === GRUPO MANO DERECHA: ESTADOS 7, 8, 9 ===
+    if (esDer) {
+      // ⌚ ESTADO 9: [DER] Antebrazo horizontal con puño cruzado en pecho/cuello
+      if (m.esPuno && m.hy >= 0.35 && m.hy <= 0.85 && esHorizontal) {
+        tipoGestoDetectado = 9;
+        nombreGestoDetectado = "Antebrazo Horizontal con Puño";
+      }
+      // 🧠 ESTADO 7: [DER] Mano en la sien (zona superior derecha de la cabeza)
+      else if (m.hy <= 0.42 && m.hx >= 0.45 && !m.esPuno) {
+        tipoGestoDetectado = 7;
+        nombreGestoDetectado = "Mano en la Sien";
+      }
+      // 💆 ESTADO 8: [DER] Mano en el cuello / garganta
+      else if (m.hy >= 0.38 && m.hy <= 0.72 && m.hx >= 0.26 && m.hx <= 0.76 && !m.esPuno) {
+        tipoGestoDetectado = 8;
+        nombreGestoDetectado = "Mano en el Cuello";
+      }
+      // Si la mano derecha hace puño en el pecho
+      else if (m.esPuno && m.hy >= 0.35 && m.hy <= 0.85) {
+        tipoGestoDetectado = 9;
+        nombreGestoDetectado = "Puño en Pecho";
+      }
+    }
+
+    // === GRUPO MANO IZQUIERDA: ESTADOS 1, 2, 3 ===
+    if (tipoGestoDetectado === 0 && esIzq) {
+      // 🤔 ESTADO 1: [IZQ] Puño bajo el mentón
+      if (m.esPuno && m.hy >= 0.32 && m.hy <= 0.65 && m.hx >= 0.26 && m.hx <= 0.74) {
+        tipoGestoDetectado = 1;
+        nombreGestoDetectado = "Puño bajo el Mentón";
+      }
+      // 🦾 ESTADO 2: [IZQ] Mano sobre hombro izquierdo (lado izquierdo en espejo hx <= 0.48)
+      else if (m.hx <= 0.48 && m.hy >= 0.28 && m.hy <= 0.75) {
+        tipoGestoDetectado = 2;
+        nombreGestoDetectado = "Mano en Hombro Izquierdo";
+      }
+      // 👃 ESTADO 3: [IZQ] Mano en la nariz / centro del rostro
+      else if (m.hy <= 0.44 && m.hy >= 0.15 && m.hx >= 0.28 && m.hx <= 0.72 && !m.esPuno) {
+        tipoGestoDetectado = 3;
+        nombreGestoDetectado = "Mano en la Nariz";
+      }
+      // Si hace puño en otra posición de la mano izquierda
+      else if (m.esPuno && m.hy >= 0.30) {
+        tipoGestoDetectado = 1;
+        nombreGestoDetectado = "Puño Izquierdo";
+      }
+    }
+
+    // Fallback unificado si la clasificación estricta de lateralidad no coincidió
+    if (tipoGestoDetectado === 0) {
+      if (m.esPuno) {
+        if (m.hy < 0.60 && m.hx >= 0.28 && m.hx <= 0.72) {
+          tipoGestoDetectado = 1;
+          nombreGestoDetectado = "Puño bajo Mentón";
+        } else if (esHorizontal) {
+          tipoGestoDetectado = 9;
+          nombreGestoDetectado = "Antebrazo con Puño";
+        }
+      } else {
+        if (m.hy <= 0.38) {
+          tipoGestoDetectado = (m.hx > 0.50) ? 7 : 3;
+          nombreGestoDetectado = (m.hx > 0.50) ? "Mano en Sien" : "Mano en Nariz";
+        } else if (m.hx <= 0.45 && m.hy <= 0.70) {
+          tipoGestoDetectado = 2;
+          nombreGestoDetectado = "Mano en Hombro";
+        } else if (m.hy >= 0.38 && m.hy <= 0.70 && m.hx >= 0.30 && m.hx <= 0.70) {
+          tipoGestoDetectado = 8;
+          nombreGestoDetectado = "Mano en Cuello";
+        }
+      }
     }
   }
 
@@ -390,7 +492,28 @@ function onHandResults(results) {
     HandTracker.celdaHover = -1;
     HandTracker.estadoSeleccion = -1;
     HandTracker.progresoSeleccion = 0;
-    actualizarEstadoUI("detecting", `Interactuando en Estado ${typeof estado !== "undefined" ? estado : ""} [${HandTracker.gestoNombre}]`);
+
+    const gestoEsperado = (typeof estado !== "undefined") ? estado : 0;
+    const nombresGestos = [
+      "",
+      "Puño bajo el Mentón",
+      "Mano en Hombro Izquierdo",
+      "Mano en la Nariz",
+      "Manos Abiertas en Pecho",
+      "Manos Unidas en Pecho",
+      "Dedos Entrelazados",
+      "Mano en la Sien",
+      "Mano en el Cuello",
+      "Antebrazo Horizontal con Puño"
+    ];
+
+    if (HandTracker.gestoId === gestoEsperado) {
+      actualizarEstadoUI("detecting", `🟢 Estado ${gestoEsperado}: ¡Gesto ${gestoEsperado} (${HandTracker.gestoNombre}) activo!`);
+    } else if (HandTracker.gestoId > 0) {
+      actualizarEstadoUI("active", `⚠️ Estado ${gestoEsperado} (espera: ${nombresGestos[gestoEsperado]}) — Detectado: Gesto ${HandTracker.gestoId} (${HandTracker.gestoNombre})`);
+    } else {
+      actualizarEstadoUI("waiting", `Estado ${gestoEsperado}: esperando Gesto ${gestoEsperado} (${nombresGestos[gestoEsperado] || ""})`);
+    }
   }
 }
 
